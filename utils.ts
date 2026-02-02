@@ -2,43 +2,6 @@
 
 import { Chapter } from './types';
 
-export const extractTextWithBreaks = (element: Element | null): string => {
-  if (!element) return '';
-
-  const blockTags = new Set([
-    'P', 'DIV', 'SECTION', 'ARTICLE', 'NAV', 'ASIDE', 'HEADER', 'FOOTER', 'MAIN',
-    'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'UL', 'OL', 'DL', 'DT', 'DD',
-    'PRE', 'BLOCKQUOTE', 'FIGURE', 'FIGCAPTION', 'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TH', 'TD'
-  ]);
-
-  const traverse = (node: Node): string => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      return node.textContent || '';
-    }
-
-    if (node.nodeType !== Node.ELEMENT_NODE) return '';
-
-    const el = node as Element;
-    const tag = el.tagName.toUpperCase();
-
-    if (tag === 'BR') return '\n';
-
-    let content = Array.from(el.childNodes).map(traverse).join('');
-
-    if (blockTags.has(tag)) {
-      content = content.trim();
-      if (!content) return '';
-      // Use single line breaks for list items to keep bullets tight, double for other blocks
-      return content + (tag === 'LI' ? '\n' : '\n\n');
-    }
-
-    return content;
-  };
-
-  const normalized = traverse(element).replace(/\n{3,}/g, '\n\n').trim();
-  return normalized;
-};
-
 /**
  * Legacy pagination logic (fallback).
  * Splits text by character count.
@@ -226,22 +189,15 @@ export const parseEpub = async (file: File): Promise<{ chapters: Chapter[], cove
            
            // If it's a document object, we extract text
            let text = '';
-           let element: Element | null = null;
            if (typeof doc === 'string') {
              // Sometimes it returns raw HTML string
              const parser = new DOMParser();
              const htmlDoc = parser.parseFromString(doc, 'text/html');
-             element = htmlDoc.body;
+             text = htmlDoc.body.textContent || '';
            } else if (doc instanceof Document) {
-             element = doc.body;
-           } else if ((doc as any)?.body) {
-             element = (doc as any).body as Element;
-           }
-
-           if (element) {
-             text = extractTextWithBreaks(element);
-           } else if (doc && (doc as any).textContent) {
-             text = (doc as any).textContent as string;
+             text = doc.body.textContent || '';
+           } else if (doc && doc.textContent) {
+             text = doc.textContent;
            }
 
            // Cleanup whitespace

@@ -143,17 +143,20 @@ const App: React.FC = () => {
           if (result.author) author = result.author;
           if (result.title && result.title.trim().length > 0) title = result.title;
         } else {
-          // Parse TXT
-          content = await new Promise<string>((resolve) => {
-            const reader = new FileReader();
-            reader.onload = (e) => {
-              const text = e.target?.result as string;
-              // Normalize newlines
-              const cleanContent = text.replace(/\r\n/g, '\n');
-              resolve(cleanContent);
-            };
-            reader.readAsText(file, 'utf-8');
-          });
+          // Parse TXT with Smart Encoding Detection
+          const buffer = await file.arrayBuffer();
+          try {
+            // Try UTF-8 first
+            const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
+            content = utf8Decoder.decode(buffer);
+          } catch (e) {
+            // Fallback to GBK for common Chinese files
+            const gbkDecoder = new TextDecoder('gbk');
+            content = gbkDecoder.decode(buffer);
+          }
+          
+          // Normalize newlines
+          content = content.replace(/\r\n/g, '\n');
           
           // Extract Metadata from first 1000 chars
           const metadata = extractMetadata(content);

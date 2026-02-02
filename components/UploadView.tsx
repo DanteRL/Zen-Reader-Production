@@ -11,7 +11,7 @@ export const UploadView: React.FC<UploadViewProps> = ({ onFileLoaded }) => {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const handleFile = (file: File) => {
+  const handleFile = async (file: File) => {
     if (file.type !== 'text/plain' && !file.name.endsWith('.txt')) {
       setError('Please upload a valid .txt file.');
       return;
@@ -20,22 +20,29 @@ export const UploadView: React.FC<UploadViewProps> = ({ onFileLoaded }) => {
     setLoading(true);
     setError(null);
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const content = e.target?.result as string;
+    try {
+      const buffer = await file.arrayBuffer();
+      let content = '';
+      
+      try {
+        // Try UTF-8 first
+        const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
+        content = utf8Decoder.decode(buffer);
+      } catch (e) {
+        // Fallback to GBK for Chinese files
+        const gbkDecoder = new TextDecoder('gbk');
+        content = gbkDecoder.decode(buffer);
+      }
+
       // Basic cleanup of windows line endings
       const cleanContent = content.replace(/\r\n/g, '\n');
       onFileLoaded(file.name.replace('.txt', ''), cleanContent);
       setLoading(false);
-    };
-    reader.onerror = () => {
+    } catch (err) {
+      console.error("Error reading file", err);
       setError('Error reading file');
       setLoading(false);
-    };
-    
-    // Default to UTF-8. 
-    // In a production app, we might use a library like jschardet to detect encoding for old files.
-    reader.readAsText(file, 'utf-8'); 
+    }
   };
 
   const onDragOver = (e: React.DragEvent) => {
