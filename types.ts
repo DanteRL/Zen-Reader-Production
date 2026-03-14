@@ -43,6 +43,9 @@ export interface ReaderSettings {
   pdfViewMode: PdfViewMode;
   pdfScale: number; // 1.0 = 100%
   pdfFitMode: PdfFitMode;
+  
+  // Text Conversion
+  textConversion: 'none' | 'cn2tw' | 'tw2cn';
 }
 
 export interface Chapter {

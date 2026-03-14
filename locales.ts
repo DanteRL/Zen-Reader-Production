@@ -92,6 +92,12 @@ export const translations = {
     lang_auto: '自动 (Auto)',
     lang_zh: '简体中文',
     lang_en: 'English',
+    
+    // Text Conversion
+    text_conversion: '文本转换',
+    text_conv_none: '原文',
+    text_conv_cn2tw: '繁体',
+    text_conv_tw2cn: '简体',
   },
   en: {
     // Bookshelf
@@ -182,5 +188,11 @@ export const translations = {
     lang_auto: 'Auto',
     lang_zh: '简体中文',
     lang_en: 'English',
+
+    // Text Conversion
+    text_conversion: 'Text Format',
+    text_conv_none: 'Original',
+    text_conv_cn2tw: 'Traditional',
+    text_conv_tw2cn: 'Simplified',
   }
 };

@@ -3,7 +3,7 @@
 import React from 'react';
 import { 
   X, Sun, Moon, Coffee, Minus, Plus, AlignLeft, AlignJustify, Target, Sparkles, Layers, EyeOff, Clock, Languages,
-  Scroll, File, BookOpen, ZoomIn, ZoomOut, RotateCcw, Key, Globe
+  Scroll, File, BookOpen, ZoomIn, ZoomOut, RotateCcw, Key, Globe, Type
 } from 'lucide-react';
 import { ReaderSettings, ThemeType, FontFamily, AILanguage, PdfViewMode, AppLanguage } from '../types';
 import { THEMES, FONT_LABELS, FONT_FAMILIES } from '../constants';
@@ -228,6 +228,31 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                     onChange={(e) => onUpdateSettings({ lineHeight: parseFloat(e.target.value) })}
                     className="w-full accent-blue-500 h-1 bg-gray-300 rounded-lg appearance-none cursor-pointer"
                  />
+              </div>
+
+              {/* Text Conversion */}
+              <div className="pt-4 space-y-3 border-t border-gray-200/20">
+                 <div className="flex justify-between text-sm opacity-80 font-medium">
+                   <span className="flex items-center gap-1"><Type className="w-4 h-4" />{t.text_conversion}</span>
+                 </div>
+                 <div className={`flex p-1 rounded-lg ${themeStyles.active}`}>
+                    {[
+                      { value: 'none', label: t.text_conv_none },
+                      { value: 'cn2tw', label: t.text_conv_cn2tw },
+                      { value: 'tw2cn', label: t.text_conv_tw2cn },
+                    ].map((conv) => (
+                      <button
+                        key={conv.value}
+                        onClick={() => onUpdateSettings({ textConversion: conv.value as 'none' | 'cn2tw' | 'tw2cn' })}
+                        className={`
+                          flex-1 py-1.5 text-xs font-medium rounded-md transition-all
+                          ${settings.textConversion === conv.value ? 'bg-white shadow-sm text-gray-900' : 'opacity-60 hover:opacity-100'}
+                        `}
+                      >
+                        {conv.label}
+                      </button>
+                    ))}
+                 </div>
               </div>
             </section>
           )}

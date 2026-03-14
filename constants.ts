@@ -38,6 +38,9 @@ export const DEFAULT_SETTINGS = {
   pdfViewMode: 'single' as const,
   pdfFitMode: 'width' as const,
   pdfScale: 1.0,
+  
+  // Text Conversion Default
+  textConversion: 'none' as const,
 };
 
 export const CHARS_PER_PAGE_ESTIMATE = 2000;

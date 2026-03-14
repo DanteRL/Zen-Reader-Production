@@ -6,6 +6,7 @@ import { calculateProgress, ensurePdfLibraryLoaded } from '../utils';
 import { TOC } from './TOC';
 import { GoogleGenAI } from "@google/genai";
 import { translations, Locale } from '../locales';
+import * as OpenCC from 'opencc-js';
 
 // --- Types ---
 interface Position {
@@ -644,6 +645,42 @@ ${langInstruction}`;
     }
   }, [book.currentPageIndex, settings.focusMode, isPdf, settings.pdfViewMode]);
 
+  // --- Text Conversion Logic ---
+  const [convertedContent, setConvertedContent] = useState<string>('');
+  const converterRef = useRef<((text: string) => string) | null>(null);
+
+  useEffect(() => {
+    // If PDF, or no chapter, or conversion is "none", just skip OpenCC
+    if (isPdf || !currentChapter) {
+      setConvertedContent('');
+      return;
+    }
+
+    if (settings.textConversion === 'none') {
+      setConvertedContent(currentChapter.content);
+      return;
+    }
+
+    // Initialize converter if needed or changed
+    try {
+      if (settings.textConversion === 'cn2tw') {
+        converterRef.current = OpenCC.Converter({ from: 'cn', to: 'tw' });
+      } else if (settings.textConversion === 'tw2cn') {
+        converterRef.current = OpenCC.Converter({ from: 'tw', to: 'cn' });
+      }
+      
+      if (converterRef.current) {
+         setConvertedContent(converterRef.current(currentChapter.content));
+      } else {
+         setConvertedContent(currentChapter.content);
+      }
+    } catch (e) {
+      console.error("OpenCC conversion error:", e);
+      setConvertedContent(currentChapter.content); // fallback
+    }
+    
+  }, [currentChapter, settings.textConversion, isPdf]);
+
   const resetControlsTimer = useCallback(() => {
     if (controlsTimerRef.current) {
       clearTimeout(controlsTimerRef.current);
@@ -908,7 +945,8 @@ ${langInstruction}`;
 
   if (!currentChapter && !isPdf) return null;
 
-  const paragraphs = currentChapter?.content.split('\n').filter(p => p.trim().length > 0) || [];
+  // Use converted content instead of original chapter content
+  const paragraphs = convertedContent ? convertedContent.split('\n').filter(p => p.trim().length > 0) : [];
 
   // Icon Logic
   const getSyncIcon = () => {
