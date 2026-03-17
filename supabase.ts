@@ -38,13 +38,28 @@ export const isSupabaseConfigured = (): boolean => {
 // Auth Helpers
 // ============================================================
 
+/**
+ * Get the redirect URL for OAuth callbacks.
+ * Priority:
+ * 1. REDIRECT_URL from env (for production)
+ * 2. window.location.origin + pathname (fallback)
+ */
+const getRedirectURL = (): string => {
+  const envRedirect = (process.env as any).REDIRECT_URL;
+  if (envRedirect) {
+    return envRedirect;
+  }
+  // Fallback to current URL
+  return window.location.origin + window.location.pathname;
+};
+
 export const signInWithGitHub = async (): Promise<void> => {
   const supabase = getSupabase();
   if (!supabase) return;
   await supabase.auth.signInWithOAuth({
     provider: 'github',
     options: {
-      redirectTo: window.location.origin,
+      redirectTo: getRedirectURL(),
     },
   });
 };
@@ -55,7 +70,7 @@ export const signInWithGoogle = async (): Promise<void> => {
   await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      redirectTo: window.location.origin,
+      redirectTo: getRedirectURL(),
     },
   });
 };
