@@ -7,7 +7,7 @@ import { DEFAULT_SETTINGS, THEME_COLORS } from './constants';
 import { parseChapters, parseEpub, parsePdf, generateId, extractMetadata, scanDirectoryForFiles } from './utils';
 import { initDB, saveBook, getAllBooks, updateBookProgress, deleteBook } from './db';
 import { Locale } from './locales';
-import { isSupabaseConfigured, onAuthStateChange, getCurrentUser, signOut, signInWithGitHub, signInWithGoogle, signInWithEmail, type Session, type User } from './supabase';
+import { isSupabaseConfigured, onAuthStateChange, getCurrentUser, signOut, signInWithGitHub, signInWithGoogle, signInWithEmail, initAuth, type Session, type User } from './supabase';
 import { computeFileHash, pushProgress, pullProgress, syncAllProgress, fetchAllProgress, createBookLink, type CloudProgress, type LocalBookForSync } from './cloudSync';
 import { LoginModal } from './components/LoginModal';
 import { LinkProgressModal } from './components/LinkProgressModal';
@@ -50,6 +50,8 @@ const App: React.FC = () => {
     const init = async () => {
       try {
         await initDB();
+        // Initialize Supabase auth and handle OAuth callbacks
+        await initAuth();
         const loadedBooks = await getAllBooks();
         setBooks(loadedBooks);
       } catch (e) {

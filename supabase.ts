@@ -24,6 +24,7 @@ export const getSupabase = (): SupabaseClient | null => {
         autoRefreshToken: true,
         persistSession: true,
         detectSessionInUrl: true,
+        flowType: 'implicit',  // Use implicit flow - token returned directly in URL hash
       },
     });
   }
@@ -32,6 +33,41 @@ export const getSupabase = (): SupabaseClient | null => {
 
 export const isSupabaseConfigured = (): boolean => {
   return !!(SUPABASE_URL && SUPABASE_ANON_KEY);
+};
+
+// Initialize and handle OAuth callback errors
+export const initAuth = async (): Promise<void> => {
+  const supabase = getSupabase();
+  if (!supabase) return;
+  
+  // Check if there's an error in the URL hash (OAuth callback error)
+  const hashParams = new URLSearchParams(window.location.hash.substring(1));
+  const error = hashParams.get('error');
+  const errorDescription = hashParams.get('error_description');
+  
+  if (error) {
+    console.error('[Auth] OAuth error:', error, errorDescription);
+    // Clear the hash to prevent repeated errors
+    window.history.replaceState(null, '', window.location.pathname);
+    return;
+  }
+  
+  // Try to get the session from the URL (OAuth callback)
+  try {
+    const { data, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) {
+      console.error('[Auth] Session error:', sessionError.message);
+    } else if (data.session) {
+      console.log('[Auth] Session restored successfully');
+    }
+  } catch (e) {
+    console.error('[Auth] Failed to get session:', e);
+  }
+  
+  // Clear the URL hash after processing
+  if (window.location.hash.includes('access_token') || window.location.hash.includes('error')) {
+    window.history.replaceState(null, '', window.location.pathname);
+  }
 };
 
 // ============================================================
