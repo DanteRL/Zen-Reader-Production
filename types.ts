@@ -68,6 +68,7 @@ export interface BookData {
   pdfArrayBuffer?: ArrayBuffer; // Stored PDF binary for native rendering
   pageCount?: number; // Total pages for PDF
   filename?: string; // Original filename for file system operations
+  fileHash?: string; // SHA-256 hash for cross-device sync
 }
 
 export interface AIEntityData {

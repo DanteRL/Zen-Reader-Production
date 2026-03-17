@@ -1,13 +1,16 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Bookshelf } from './components/Bookshelf';
 import { ReaderView } from './components/ReaderView';
 import { ControlPanel } from './components/ControlPanel';
 import { BookData, ReaderSettings, Chapter } from './types';
 import { DEFAULT_SETTINGS, THEME_COLORS } from './constants';
 import { parseChapters, parseEpub, parsePdf, generateId, extractMetadata, scanDirectoryForFiles } from './utils';
-import { initDB, saveBook, getAllBooks, updateBookProgress, deleteBook, saveDirectoryHandle, getDirectoryHandle } from './db';
-import { verifyPermission, readSyncFile, writeSyncFile, SyncState } from './fsHelpers';
+import { initDB, saveBook, getAllBooks, updateBookProgress, deleteBook } from './db';
 import { Locale } from './locales';
+import { isSupabaseConfigured, onAuthStateChange, getCurrentUser, signOut, signInWithGitHub, signInWithGoogle, signInWithEmail, type Session, type User } from './supabase';
+import { computeFileHash, pushProgress, pullProgress, syncAllProgress, fetchAllProgress, createBookLink, type CloudProgress, type LocalBookForSync } from './cloudSync';
+import { LoginModal } from './components/LoginModal';
+import { LinkProgressModal } from './components/LinkProgressModal';
 
 const App: React.FC = () => {
   // Application State
@@ -16,11 +19,13 @@ const App: React.FC = () => {
   const [activeBook, setActiveBook] = useState<BookData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Sync State
-  const [syncHandle, setSyncHandle] = useState<any | null>(null);
-  const [syncFolderName, setSyncFolderName] = useState<string | null>(null);
+  // Cloud Sync State
+  const [cloudUser, setCloudUser] = useState<User | null>(null);
   const [isSyncConnected, setIsSyncConnected] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [showLinkModal, setShowLinkModal] = useState<{ bookId: string; bookHash: string; bookTitle: string } | null>(null);
+  const [cloudProgressList, setCloudProgressList] = useState<CloudProgress[]>([]);
 
   const [settings, setSettings] = useState<ReaderSettings>(() => {
     const saved = localStorage.getItem('zenreader-settings');
@@ -47,15 +52,6 @@ const App: React.FC = () => {
         await initDB();
         const loadedBooks = await getAllBooks();
         setBooks(loadedBooks);
-
-        // Check for persisted sync handle
-        const handle = await getDirectoryHandle();
-        if (handle) {
-          setSyncHandle(handle);
-          setSyncFolderName(handle.name);
-          // We assume connected for UI, but actual reads need permission verification
-          // which happens on user interaction or first sync attempt.
-        }
       } catch (e) {
         console.error("Failed to load database", e);
       } finally {
@@ -63,6 +59,29 @@ const App: React.FC = () => {
       }
     };
     init();
+  }, []);
+
+  // Listen for Supabase auth state changes
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data } = onAuthStateChange((session: Session | null) => {
+      const user = session?.user || null;
+      setCloudUser(user);
+      setIsSyncConnected(!!user);
+    });
+
+    // Check initial session
+    getCurrentUser().then(user => {
+      if (user) {
+        setCloudUser(user);
+        setIsSyncConnected(true);
+      }
+    });
+
+    return () => {
+      data.subscription.unsubscribe();
+    };
   }, []);
 
   // Sync Settings to LocalStorage (Immediate)
@@ -77,37 +96,42 @@ const App: React.FC = () => {
     }
   }, [settings, view]);
 
-  // --- AUTOMATIC SYNC LOGIC (Debounced) ---
+  // --- CLOUD SYNC: Auto-push progress on changes (Debounced) ---
   useEffect(() => {
-    // Only run if we are fully connected and have a handle
-    if (!isSyncConnected || !syncHandle) return;
+    if (!isSyncConnected || !cloudUser) return;
 
-    const performSync = async () => {
+    const performPush = async () => {
+      // Only push the active book's progress if we're in the reader
+      if (!activeBook || !activeBook.fileHash) return;
+
       setSyncStatus('syncing');
       try {
-         // Verify permission silently first (usually cached by browser session)
-         // If permission is lost, this might fail, which is expected.
-         const hasPerm = await verifyPermission(syncHandle, false); 
-         if (!hasPerm) {
-             setSyncStatus('error'); // Permission lost in background
-             return;
-         }
+        const totalPages = activeBook.pdfArrayBuffer
+          ? (activeBook.pageCount || 1)
+          : Math.max(1, activeBook.chapters?.length || 1);
 
-         await syncStateToDisk(syncHandle, books, settings);
-         setSyncStatus('success');
-         // Clear success message after 3s
-         setTimeout(() => setSyncStatus((prev) => prev === 'success' ? 'idle' : prev), 3000);
+        const ok = await pushProgress(cloudUser.id, {
+          file_hash: activeBook.fileHash,
+          book_title: activeBook.title,
+          author: activeBook.author,
+          current_page_index: activeBook.currentPageIndex,
+          total_pages: totalPages,
+          last_read_at: activeBook.lastReadAt,
+        });
+
+        setSyncStatus(ok ? 'success' : 'error');
+        if (ok) {
+          setTimeout(() => setSyncStatus(prev => prev === 'success' ? 'idle' : prev), 3000);
+        }
       } catch (error) {
-         console.error("Auto-sync failed:", error);
-         setSyncStatus('error');
+        console.error("[CloudSync] Auto-push failed:", error);
+        setSyncStatus('error');
       }
     };
 
-    // Debounce 1 second for snappier feeling while avoiding disk thrashing
-    const timer = setTimeout(performSync, 1000);
+    const timer = setTimeout(performPush, 1500);
     return () => clearTimeout(timer);
-
-  }, [books, settings, isSyncConnected, syncHandle]);
+  }, [activeBook?.currentPageIndex, activeBook?.lastReadAt, isSyncConnected, cloudUser]);
 
 
   const processFile = async (file: File): Promise<BookData | null> => {
@@ -120,8 +144,12 @@ const App: React.FC = () => {
       let publisher: string | undefined;
       let pdfArrayBuffer: ArrayBuffer | undefined;
       let pageCount: number | undefined;
+      let fileHash: string | undefined;
       
       try {
+        // Compute file hash for cross-device sync
+        fileHash = await computeFileHash(file);
+
         const lowerName = file.name.toLowerCase();
   
         if (lowerName.endsWith('.epub')) {
@@ -188,6 +216,7 @@ const App: React.FC = () => {
           pdfArrayBuffer: pdfArrayBuffer,
           pageCount: pageCount,
           filename: file.name, // Store original filename for sync operations
+          fileHash: fileHash, // SHA-256 hash for cross-device sync
         };
         
         return newBook;
@@ -198,26 +227,22 @@ const App: React.FC = () => {
       }
   };
 
-  // Central helper to write sync file
-  const syncStateToDisk = async (handle: any, currentBooks: BookData[], currentSettings: ReaderSettings) => {
-      try {
-          const progressMap: Record<string, { pageIndex: number; lastReadAt: number }> = {};
-          currentBooks.forEach(b => {
-              progressMap[b.id] = { pageIndex: b.currentPageIndex, lastReadAt: b.lastReadAt };
-          });
-
-          const syncData: SyncState = {
-              updatedAt: Date.now(),
-              settings: currentSettings,
-              progress: progressMap
-          };
-
-          await writeSyncFile(handle, syncData);
-      } catch (e) {
-          console.error("Background sync write failed", e);
-          throw e; // Propagate for handling
-      }
-  };
+  // Central cloud sync helper: push progress for a single book
+  const pushBookProgress = useCallback(async (book: BookData) => {
+    if (!cloudUser || !book.fileHash) return;
+    const totalPages = book.pdfArrayBuffer
+      ? (book.pageCount || 1)
+      : Math.max(1, book.chapters?.length || 1);
+    
+    await pushProgress(cloudUser.id, {
+      file_hash: book.fileHash,
+      book_title: book.title,
+      author: book.author,
+      current_page_index: book.currentPageIndex,
+      total_pages: totalPages,
+      last_read_at: book.lastReadAt,
+    });
+  }, [cloudUser]);
 
   // Bulk import handler
   const handleBooksImport = async (files: File[]) => {
@@ -244,9 +269,28 @@ const App: React.FC = () => {
                const existingIndex = newBooks.findIndex(b => b.id === book.id);
 
                if (existingIndex >= 0) {
-                  // Already exists, don't overwrite unless we want to update content
+                  // Already exists — update fileHash if it was missing
+                  if (!newBooks[existingIndex].fileHash && book.fileHash) {
+                    newBooks[existingIndex].fileHash = book.fileHash;
+                    await saveBook(newBooks[existingIndex]);
+                    hasChanges = true;
+                  }
                   console.log(`Book ${book.title} exists, skipping content overwrite.`);
                } else {
+                  // New book — check cloud for existing progress (auto-track)
+                  if (cloudUser && book.fileHash) {
+                    try {
+                      const cloudProg = await pullProgress(cloudUser.id, book.fileHash);
+                      if (cloudProg && cloudProg.last_read_at > 0) {
+                        book.currentPageIndex = cloudProg.current_page_index;
+                        book.lastReadAt = cloudProg.last_read_at;
+                        console.log(`[CloudSync] Auto-restored progress for "${book.title}" from cloud.`);
+                      }
+                    } catch (e) {
+                      console.warn('[CloudSync] Failed to pull progress on import:', e);
+                    }
+                  }
+
                   await saveBook(book);
                   newBooks.push(book);
                   importedCount++;
@@ -258,10 +302,6 @@ const App: React.FC = () => {
         if (hasChanges) {
            const updatedBooks = await getAllBooks();
            setBooks(updatedBooks);
-           if (importedCount > 0 && !isSyncConnected) {
-              // Only alert if manual import (not sync scan)
-              alert(`Successfully imported ${importedCount} books.`);
-           }
         }
     } catch (err) {
         console.error("Bulk import error", err);
@@ -276,7 +316,6 @@ const App: React.FC = () => {
   };
 
   const handleImportFolder = async (): Promise<boolean> => {
-     // Legacy scan folder (read-only scan)
      try {
        // @ts-ignore
        if (window.showDirectoryPicker) {
@@ -286,156 +325,132 @@ const App: React.FC = () => {
            const files = await scanDirectoryForFiles(dirHandle);
            setIsLoading(false);
            await handleBooksImport(files);
-           return true; // Success
+           return true;
        }
      } catch (err) {
-        // If security error (iframe) or user cancelled, we return false to fallback
         console.warn("Import folder failed (falling back to input):", err);
      } finally {
         setIsLoading(false);
      }
-     return false; // Fallback required
+     return false;
   };
 
-  // --- CORE SYNC LOGIC ---
+  // --- CLOUD SYNC LOGIC ---
 
-  const performConnectAndSync = async (dirHandle: any) => {
-      try {
-          setIsLoading(true);
-          setSyncStatus('syncing');
-
-          // 1. Verify Permission (Prompt User if needed)
-          const granted = await verifyPermission(dirHandle, true);
-          if (!granted) {
-              alert("Permission denied to access the sync folder. Please try again.");
-              setSyncStatus('error');
-              return;
-          }
-
-          // 2. Save Handle & Info
-          setSyncHandle(dirHandle);
-          setSyncFolderName(dirHandle.name);
-          await saveDirectoryHandle(dirHandle);
-          
-          // --- SYNC PHASE 1: READ REMOTE ---
-          
-          // A. Read Sync State JSON
-          const remoteState = await readSyncFile(dirHandle);
-          
-          // B. Scan for Book Files in Folder
-          const files = await scanDirectoryForFiles(dirHandle);
-          
-          // C. Import any new books found in the folder
-          await handleBooksImport(files);
-
-          // --- SYNC PHASE 2: MERGE STATE ---
-          const currentAllBooks = await getAllBooks();
-          let stateChanged = false;
-
-          if (remoteState) {
-              // Merge Settings (Remote wins if valid, or we could do timestamp based if we tracked it)
-              // For simplicity: If remote has settings, apply them.
-              if (remoteState.settings) {
-                  setSettings(prev => ({ ...prev, ...remoteState.settings }));
-                  stateChanged = true;
-              }
-
-              // Merge Progress
-              if (remoteState.progress) {
-                  for (const book of currentAllBooks) {
-                      const remoteProg = remoteState.progress[book.id];
-                      if (remoteProg) {
-                          // Rule: If Remote is newer, take Remote.
-                          // If Local is newer, keep Local (it will overwrite remote in Phase 3)
-                          if (remoteProg.lastReadAt > book.lastReadAt || book.currentPageIndex === 0) {
-                              book.currentPageIndex = remoteProg.pageIndex;
-                              book.lastReadAt = remoteProg.lastReadAt;
-                              await updateBookProgress(book.id, book.currentPageIndex);
-                              stateChanged = true;
-                          }
-                      }
-                  }
-              }
-          }
-
-          // Update React State if merged
-          if (stateChanged) {
-             const reloaded = await getAllBooks();
-             setBooks(reloaded);
-             
-             // --- SYNC PHASE 3: WRITE BACK (Merged State) ---
-             // We write the *freshly merged* state back to disk immediately
-             // so the cloud file is up to date with this device's latest changes too.
-             await syncStateToDisk(dirHandle, reloaded, remoteState?.settings ? { ...settings, ...remoteState.settings } : settings);
-          } else {
-             // No changes from remote, but we should overwrite remote with our current state 
-             // to ensure it's initialized if it was empty.
-             await syncStateToDisk(dirHandle, currentAllBooks, settings);
-             setBooks(currentAllBooks);
-          }
-          
-          // Done
-          setIsSyncConnected(true);
-          setSyncStatus('success');
-          // alert("Sync Connected! Your library is now staying in sync with this folder.");
-
-      } catch (err) {
-          console.error("Sync Logic Error", err);
-          alert("Failed to sync with the selected folder.");
-          setSyncStatus('error');
-          setIsSyncConnected(false);
-      } finally {
-          setIsLoading(false);
-          setTimeout(() => setSyncStatus(prev => prev === 'success' ? 'idle' : prev), 3000);
-      }
+  const handleLogin = () => {
+    if (!isSupabaseConfigured()) {
+      alert("Cloud Sync is not configured.\n\nPlease set SUPABASE_URL and SUPABASE_ANON_KEY in your environment.");
+      return;
+    }
+    setShowLoginModal(true);
   };
 
-  const handleConnectSyncFolder = async () => {
-      // 0. Compatibility Check
-      if (!('showDirectoryPicker' in window)) {
-         alert("Sync Feature Not Supported in this Browser.\n\nDue to Apple's security restrictions, Safari does not support the File System Access API required for real-time sync.\n\nPlease use Chrome, Edge, or Opera on Desktop for this feature.\n\nYou can still use the 'Import' button to add files manually.");
-         return;
-      }
-
-      try {
-          // 1. Pick Folder
-          // @ts-ignore
-          const dirHandle = await window.showDirectoryPicker({
-              mode: 'readwrite',
-              id: 'zenreader-sync'
-          });
-
-          // 2. Execute Sync Logic
-          await performConnectAndSync(dirHandle);
-
-      } catch (err) {
-          // Handle specific errors
-          if ((err as Error).name === 'AbortError') return; // User cancelled
-          
-          if ((err as Error).name === 'SecurityError' || (err as any).code === 18) {
-              alert("Security Restriction: Sync cannot run in an iframe or cross-origin context. Please open the app in a full browser tab.");
-          } else {
-              alert(`Connection Failed: ${(err as Error).message}`);
-          }
-          setSyncStatus('error');
-      }
-  };
-
-  const handleReconnectSync = async () => {
-     if (syncHandle) {
-         // Reusing the handle will trigger permission prompt if permission is gone (e.g. refresh)
-         await performConnectAndSync(syncHandle);
-     }
+  const handleLogout = async () => {
+    await signOut();
+    setCloudUser(null);
+    setIsSyncConnected(false);
+    setSyncStatus('idle');
   };
 
   const handleManualSync = async () => {
-      if (!syncHandle) {
-          // If no handle, treat as "Connect First Time"
-          await handleConnectSyncFolder();
-      } else {
-          // If handle exists, reuse it (will trigger permission prompt if needed)
-          await performConnectAndSync(syncHandle);
+    if (!cloudUser) {
+      handleLogin();
+      return;
+    }
+
+    setSyncStatus('syncing');
+    try {
+      // Build local book list for sync
+      const currentBooks = await getAllBooks();
+      const localForSync: LocalBookForSync[] = currentBooks
+        .filter(b => b.fileHash)
+        .map(b => ({
+          fileHash: b.fileHash!,
+          title: b.title,
+          author: b.author,
+          currentPageIndex: b.currentPageIndex,
+          totalPages: b.pdfArrayBuffer
+            ? (b.pageCount || 1)
+            : Math.max(1, b.chapters?.length || 1),
+          lastReadAt: b.lastReadAt,
+        }));
+
+      const result = await syncAllProgress(cloudUser.id, localForSync);
+
+      // Apply pulled progress locally
+      if (result.pulled.length > 0) {
+        for (const pulled of result.pulled) {
+          const localBook = currentBooks.find(b => b.fileHash === pulled.fileHash);
+          if (localBook) {
+            localBook.currentPageIndex = pulled.pageIndex;
+            localBook.lastReadAt = pulled.lastReadAt;
+            await updateBookProgress(localBook.id, pulled.pageIndex);
+          }
+        }
+        const reloaded = await getAllBooks();
+        setBooks(reloaded);
       }
+
+      setSyncStatus('success');
+      console.log(`[CloudSync] Sync complete: pulled=${result.pulled.length}, pushed=${result.pushed}, errors=${result.errors}`);
+      setTimeout(() => setSyncStatus(prev => prev === 'success' ? 'idle' : prev), 3000);
+    } catch (err) {
+      console.error("[CloudSync] Manual sync failed:", err);
+      setSyncStatus('error');
+    }
+  };
+
+  // --- LINK PROGRESS (Manual Track) ---
+
+  const handleOpenLinkModal = async (bookId: string) => {
+    if (!cloudUser) {
+      handleLogin();
+      return;
+    }
+    const book = books.find(b => b.id === bookId);
+    if (!book || !book.fileHash) {
+      alert("This book doesn't have a file hash. Please re-import it.");
+      return;
+    }
+    
+    // Fetch all cloud progress entries for the user
+    const allProgress = await fetchAllProgress(cloudUser.id);
+    // Filter out the current book's own hash
+    const filtered = allProgress.filter(p => p.file_hash !== book.fileHash);
+    setCloudProgressList(filtered);
+    setShowLinkModal({ bookId: book.id, bookHash: book.fileHash, bookTitle: book.title });
+  };
+
+  const handleLinkProgress = async (targetHash: string) => {
+    if (!cloudUser || !showLinkModal) return;
+
+    try {
+      // 1. Create the link
+      const ok = await createBookLink(cloudUser.id, showLinkModal.bookHash, targetHash);
+      if (!ok) {
+        alert("Failed to create link.");
+        return;
+      }
+
+      // 2. Pull progress from the target
+      const cloudProg = await pullProgress(cloudUser.id, showLinkModal.bookHash);
+      if (cloudProg) {
+        const localBook = books.find(b => b.id === showLinkModal.bookId);
+        if (localBook) {
+          localBook.currentPageIndex = cloudProg.current_page_index;
+          localBook.lastReadAt = cloudProg.last_read_at;
+          await updateBookProgress(localBook.id, cloudProg.current_page_index);
+          
+          const reloaded = await getAllBooks();
+          setBooks(reloaded);
+        }
+      }
+
+      setShowLinkModal(null);
+    } catch (err) {
+      console.error("[CloudSync] Link progress failed:", err);
+      alert("Failed to link progress.");
+    }
   };
 
   const handleExportBackup = async () => {
@@ -556,7 +571,20 @@ const App: React.FC = () => {
        ? (book.pageCount ? book.pageCount - 1 : 0)
        : Math.max(0, chapters.length - 1);
 
-    const validPageIndex = Math.min(book.currentPageIndex, maxIndex);
+    let validPageIndex = Math.min(book.currentPageIndex, maxIndex);
+
+    // --- Auto-Track: Pull cloud progress if hash is available ---
+    if (cloudUser && book.fileHash) {
+      try {
+        const cloudProg = await pullProgress(cloudUser.id, book.fileHash);
+        if (cloudProg && cloudProg.last_read_at > book.lastReadAt) {
+          validPageIndex = Math.min(cloudProg.current_page_index, maxIndex);
+          console.log(`[CloudSync] Auto-restored progress for "${book.title}" from cloud (page ${validPageIndex}).`);
+        }
+      } catch (e) {
+        console.warn('[CloudSync] Failed to pull progress on open:', e);
+      }
+    }
 
     // Prepare book state
     const updatedBook = { ...book, chapters, currentPageIndex: validPageIndex, lastReadAt: Date.now() };
@@ -571,35 +599,15 @@ const App: React.FC = () => {
     setView('reader');
   };
 
-  const handleDeleteBooks = async (ids: string[], deleteLocal: boolean) => {
+  const handleDeleteBooks = async (ids: string[]) => {
     setIsLoading(true);
     try {
-      // 1. Delete from Local File System (if sync connected and requested)
-      if (deleteLocal && syncHandle) {
-         let deletedCount = 0;
-         for (const id of ids) {
-            const book = books.find(b => b.id === id);
-            if (book && book.filename) {
-               try {
-                 // @ts-ignore
-                 await syncHandle.removeEntry(book.filename);
-                 deletedCount++;
-               } catch(e) { 
-                  console.warn(`Could not delete local file for ${book.title}`, e); 
-               }
-             }
-         }
-         if (deletedCount > 0) {
-             console.log(`Deleted ${deletedCount} local files.`);
-         }
-      }
-
-      // 2. Delete from DB
+      // Delete from DB
       for (const id of ids) {
         await deleteBook(id);
       }
       
-      // 3. Refresh State
+      // Refresh State
       const updatedBooks = await getAllBooks();
       setBooks(updatedBooks);
     } catch (err) {
@@ -657,12 +665,12 @@ const App: React.FC = () => {
           onRestoreBackup={handleRestoreBackup}
           onOpenBook={handleOpenBook}
           onDeleteBooks={handleDeleteBooks}
-          onConnectSync={handleConnectSyncFolder}
+          onLogin={handleLogin}
+          onLogout={handleLogout}
           onManualSync={handleManualSync}
-          onReconnectSync={handleReconnectSync}
-          hasSavedSync={!!syncHandle}
+          onLinkProgress={handleOpenLinkModal}
+          cloudUser={cloudUser}
           isSyncConnected={isSyncConnected}
-          syncFolderName={syncFolderName}
           syncStatus={syncStatus}
           language={currentLocale}
         />
@@ -691,6 +699,25 @@ const App: React.FC = () => {
           />
         </>
       ) : null}
+
+      {/* Login Modal */}
+      {showLoginModal && (
+        <LoginModal 
+          onClose={() => setShowLoginModal(false)} 
+          language={currentLocale}
+        />
+      )}
+
+      {/* Link Progress Modal */}
+      {showLinkModal && (
+        <LinkProgressModal
+          bookTitle={showLinkModal.bookTitle}
+          progressList={cloudProgressList}
+          onLink={handleLinkProgress}
+          onClose={() => setShowLinkModal(null)}
+          language={currentLocale}
+        />
+      )}
     </div>
   );
 };

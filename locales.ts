@@ -28,16 +28,17 @@ export const translations = {
     tab_length: '字数',
     not_started: '未开始',
 
-    // Toolbar (Sync/Import/Export)
+    // Toolbar (Cloud Sync)
     sync: '同步',
     sync_status: '同步状态',
     connected: '已连接',
     disconnected: '未连接',
     sync_now: '立即同步',
-    change_folder: '修改同步文件夹',
-    set_folder: '设置同步文件夹',
-    reconnect_sync: '重新连接',
-    permission_required: '需要权限恢复同步',
+    cloud_account: '云端账号',
+    login: '登录',
+    logout: '退出登录',
+    login_to_sync: '登录以启用云同步',
+    link_progress: '关联进度',
     
     import: '导入',
     import_file: '添加文件',
@@ -46,6 +47,25 @@ export const translations = {
     
     export: '导出',
     backup_data: '备份数据',
+
+    // Login Modal
+    login_title: '登录到 ZenReader',
+    login_subtitle: '登录后即可在多设备间同步阅读进度',
+    login_github: '使用 GitHub 登录',
+    login_google: '使用 Google 登录',
+    login_email: '使用邮箱登录',
+    login_or: '或',
+    login_email_placeholder: '邮箱地址',
+    login_password_placeholder: '密码',
+    login_submit: '登录 / 注册',
+    login_back: '← 返回其他登录方式',
+
+    // Link Progress Modal
+    link_title: '关联阅读进度',
+    link_subtitle: '选择要关联进度的云端书籍，关联到',
+    link_search_placeholder: '搜索云端书籍...',
+    link_empty: '暂无可关联的云端进度。\n先在其他设备阅读并同步吧。',
+    link_confirm: '确认关联',
 
     // Reader
     chapter: '章节',
@@ -124,16 +144,17 @@ export const translations = {
     tab_length: 'Length',
     not_started: 'Not Started',
 
-    // Toolbar
+    // Toolbar (Cloud Sync)
     sync: 'Sync',
     sync_status: 'Sync Status',
     connected: 'Connected',
     disconnected: 'Disconnected',
     sync_now: 'Sync Now',
-    change_folder: 'Change Folder',
-    set_folder: 'Set Sync Folder',
-    reconnect_sync: 'Reconnect Sync',
-    permission_required: 'Permission Required',
+    cloud_account: 'Cloud Account',
+    login: 'Log In',
+    logout: 'Log Out',
+    login_to_sync: 'Log in to enable cloud sync',
+    link_progress: 'Link Progress',
 
     import: 'Import',
     import_file: 'Add Files',
@@ -142,6 +163,25 @@ export const translations = {
 
     export: 'Export',
     backup_data: 'Backup Data',
+
+    // Login Modal
+    login_title: 'Sign in to ZenReader',
+    login_subtitle: 'Sync reading progress across all your devices',
+    login_github: 'Continue with GitHub',
+    login_google: 'Continue with Google',
+    login_email: 'Continue with Email',
+    login_or: 'or',
+    login_email_placeholder: 'Email address',
+    login_password_placeholder: 'Password',
+    login_submit: 'Sign In / Sign Up',
+    login_back: '← Back to other options',
+
+    // Link Progress Modal
+    link_title: 'Link Reading Progress',
+    link_subtitle: 'Select a cloud book to link progress to',
+    link_search_placeholder: 'Search cloud books...',
+    link_empty: 'No cloud progress entries found.\nRead and sync on another device first.',
+    link_confirm: 'Link Progress',
 
     // Reader
     chapter: 'Chapter',
