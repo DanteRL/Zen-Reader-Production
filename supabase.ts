@@ -46,10 +46,14 @@ export const isSupabaseConfigured = (): boolean => {
  */
 const getRedirectURL = (): string => {
   const envRedirect = (process.env as any).REDIRECT_URL;
+  console.log('[Auth] REDIRECT_URL from env:', envRedirect);
+  console.log('[Auth] Fallback URL:', window.location.origin + window.location.pathname);
   if (envRedirect) {
+    console.log('[Auth] Using env REDIRECT_URL:', envRedirect);
     return envRedirect;
   }
   // Fallback to current URL
+  console.log('[Auth] Using fallback URL');
   return window.location.origin + window.location.pathname;
 };
 
