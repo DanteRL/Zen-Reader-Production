@@ -2,7 +2,7 @@
 import { BookData } from './types';
 
 const DB_NAME = 'ZenReaderDB';
-const DB_VERSION = 6; // Bumped to 6 to ensure schema upgrade runs
+const DB_VERSION = 6; // Stable version with fileHash support
 const STORE_NAME = 'books';
 const HANDLE_STORE_NAME = 'handles';
 

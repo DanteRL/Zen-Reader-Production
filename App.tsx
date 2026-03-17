@@ -65,17 +65,41 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
 
-    const { data } = onAuthStateChange((session: Session | null) => {
+    const { data } = onAuthStateChange(async (session: Session | null) => {
       const user = session?.user || null;
       setCloudUser(user);
       setIsSyncConnected(!!user);
+      
+      if (user) {
+        // CRITICAL: Reload books after login to prevent state issues
+        // This ensures the book list is preserved after auth state change
+        try {
+          const reloadedBooks = await getAllBooks();
+          setBooks(reloadedBooks);
+          console.log(`[Auth] Logged in, reloaded ${reloadedBooks.length} books`);
+        } catch (e) {
+          console.error('[Auth] Failed to reload books after login:', e);
+        }
+      } else {
+        // User logged out - clear sync state
+        setSyncStatus('idle');
+        console.log('[Auth] Logged out, sync state cleared');
+        // Note: We DON'T clear books - they should remain in local storage
+      }
     });
 
     // Check initial session
-    getCurrentUser().then(user => {
+    getCurrentUser().then(async user => {
       if (user) {
         setCloudUser(user);
         setIsSyncConnected(true);
+        // Also reload books on initial session check
+        try {
+          const reloadedBooks = await getAllBooks();
+          setBooks(reloadedBooks);
+        } catch (e) {
+          console.error('[Auth] Failed to reload books on initial session:', e);
+        }
       }
     });
 
@@ -346,10 +370,15 @@ const App: React.FC = () => {
   };
 
   const handleLogout = async () => {
-    await signOut();
-    setCloudUser(null);
-    setIsSyncConnected(false);
-    setSyncStatus('idle');
+    try {
+      await signOut();
+      // Don't manually set state here - let onAuthStateChange handle it
+      // This prevents race conditions and ensures proper cleanup
+      console.log('[Auth] Signed out successfully');
+    } catch (err) {
+      console.error('[Auth] Logout failed:', err);
+      alert('退出登录失败，请重试');
+    }
   };
 
   const handleManualSync = async () => {
