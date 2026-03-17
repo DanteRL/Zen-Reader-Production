@@ -67,126 +67,78 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
 
+    /**
+     * Shared helper: reload books from IndexedDB and perform a full
+     * bidirectional sync with the cloud. Called both on login and on
+     * initial page load when a session already exists.
+     */
+    const reloadAndSync = async (userId: string) => {
+      try {
+        const reloadedBooks = await getAllBooks();
+        setBooks(reloadedBooks);
+
+        const booksWithHash = reloadedBooks.filter(b => b.fileHash);
+        if (booksWithHash.length === 0) return;
+
+        setSyncStatus('syncing');
+
+        const localForSync: LocalBookForSync[] = booksWithHash.map(b => ({
+          fileHash: b.fileHash!,
+          title: b.title,
+          author: b.author,
+          currentPageIndex: b.currentPageIndex,
+          totalPages: b.pdfArrayBuffer
+            ? (b.pageCount || 1)
+            : Math.max(1, b.chapters?.length || 1),
+          lastReadAt: b.lastReadAt,
+        }));
+
+        const result = await syncAllProgress(userId, localForSync);
+
+        // Apply pulled progress to local books
+        if (result.pulled.length > 0) {
+          const updatedBooks = [...reloadedBooks];
+          for (const pulled of result.pulled) {
+            const idx = updatedBooks.findIndex(b => b.fileHash === pulled.fileHash);
+            if (idx !== -1) {
+              updatedBooks[idx] = {
+                ...updatedBooks[idx],
+                currentPageIndex: pulled.pageIndex,
+                lastReadAt: pulled.lastReadAt,
+              };
+              await updateBookProgress(updatedBooks[idx].id, pulled.pageIndex);
+            }
+          }
+          setBooks(updatedBooks);
+        }
+
+        setSyncStatus(result.errors > 0 ? 'error' : 'success');
+        setTimeout(() => setSyncStatus('idle'), 3000);
+      } catch (e) {
+        console.error('[Auth] Sync failed:', e);
+        setSyncStatus('error');
+      }
+    };
+
     const { data } = onAuthStateChange(async (session: Session | null) => {
       const user = session?.user || null;
       setCloudUser(user);
       setIsSyncConnected(!!user);
-      
+
       if (user) {
-        // CRITICAL: Reload books after login to prevent state issues
-        // This ensures the book list is preserved after auth state change
-        try {
-          const reloadedBooks = await getAllBooks();
-          setBooks(reloadedBooks);
-          console.log(`[Auth] Logged in, reloaded ${reloadedBooks.length} books`);
-
-          // Auto-sync all local books to cloud after successful login
-          if (reloadedBooks.length > 0) {
-            setSyncStatus('syncing');
-            console.log('[Auth] Starting auto-sync of local books to cloud...');
-            
-            const localBooksForSync: LocalBookForSync[] = reloadedBooks.map(book => ({
-              fileHash: book.fileHash || '',
-              title: book.title,
-              author: book.author,
-              currentPageIndex: book.currentPageIndex,
-              totalPages: book.pdfArrayBuffer 
-                ? (book.pageCount || 1)
-                : Math.max(1, book.chapters?.length || 1),
-              lastReadAt: book.lastReadAt,
-            })).filter(b => b.fileHash); // Only sync books with valid hash
-
-            const syncResult = await syncAllProgress(user.id, localBooksForSync);
-            console.log(`[Auth] Sync complete: pushed=${syncResult.pushed}, pulled=${syncResult.pulled.length}, errors=${syncResult.errors}`);
-
-            // Apply pulled progress to local books
-            if (syncResult.pulled.length > 0) {
-              const updatedBooks = [...reloadedBooks];
-              for (const pulled of syncResult.pulled) {
-                const bookIndex = updatedBooks.findIndex(b => b.fileHash === pulled.fileHash);
-                if (bookIndex !== -1) {
-                  updatedBooks[bookIndex] = {
-                    ...updatedBooks[bookIndex],
-                    currentPageIndex: pulled.pageIndex,
-                    lastReadAt: pulled.lastReadAt,
-                  };
-                  // Save to IndexedDB
-                  await updateBookProgress(updatedBooks[bookIndex].id, pulled.pageIndex);
-                }
-              }
-              setBooks(updatedBooks);
-              console.log(`[Auth] Applied ${syncResult.pulled.length} pulled progress updates to local books`);
-            }
-
-            setSyncStatus(syncResult.errors > 0 ? 'error' : 'success');
-            setTimeout(() => setSyncStatus('idle'), 3000);
-          }
-        } catch (e) {
-          console.error('[Auth] Failed to reload books or sync after login:', e);
-          setSyncStatus('error');
-        }
+        await reloadAndSync(user.id);
       } else {
-        // User logged out - clear sync state
+        // Logged out — clear sync state but keep local books
         setSyncStatus('idle');
-        console.log('[Auth] Logged out, sync state cleared');
-        // Note: We DON'T clear books - they should remain in local storage
       }
     });
 
-    // Check initial session
+    // Check for existing session on initial load
     getCurrentUser().then(async user => {
       if (user) {
         setCloudUser(user);
         setIsSyncConnected(true);
-        // Also reload books on initial session check and sync
-        try {
-          const reloadedBooks = await getAllBooks();
-          setBooks(reloadedBooks);
-          
-          // Auto-sync on initial load if already logged in
-          if (reloadedBooks.length > 0) {
-            setSyncStatus('syncing');
-            console.log('[Auth] Initial session found, syncing local books...');
-            
-            const localBooksForSync: LocalBookForSync[] = reloadedBooks.map(book => ({
-              fileHash: book.fileHash || '',
-              title: book.title,
-              author: book.author,
-              currentPageIndex: book.currentPageIndex,
-              totalPages: book.pdfArrayBuffer 
-                ? (book.pageCount || 1)
-                : Math.max(1, book.chapters?.length || 1),
-              lastReadAt: book.lastReadAt,
-            })).filter(b => b.fileHash);
-
-            const syncResult = await syncAllProgress(user.id, localBooksForSync);
-            console.log(`[Auth] Initial sync complete: pushed=${syncResult.pushed}, pulled=${syncResult.pulled.length}, errors=${syncResult.errors}`);
-
-            // Apply pulled progress
-            if (syncResult.pulled.length > 0) {
-              const updatedBooks = [...reloadedBooks];
-              for (const pulled of syncResult.pulled) {
-                const bookIndex = updatedBooks.findIndex(b => b.fileHash === pulled.fileHash);
-                if (bookIndex !== -1) {
-                  updatedBooks[bookIndex] = {
-                    ...updatedBooks[bookIndex],
-                    currentPageIndex: pulled.pageIndex,
-                    lastReadAt: pulled.lastReadAt,
-                  };
-                  await updateBookProgress(updatedBooks[bookIndex].id, pulled.pageIndex);
-                }
-              }
-              setBooks(updatedBooks);
-              console.log(`[Auth] Applied ${syncResult.pulled.length} pulled progress updates on initial load`);
-            }
-
-            setSyncStatus(syncResult.errors > 0 ? 'error' : 'success');
-            setTimeout(() => setSyncStatus('idle'), 3000);
-          }
-        } catch (e) {
-          console.error('[Auth] Failed to reload books or sync on initial session:', e);
-          setSyncStatus('error');
-        }
+        await reloadAndSync(user.id);
       }
     });
 
@@ -386,7 +338,7 @@ const App: React.FC = () => {
                     await saveBook(newBooks[existingIndex]);
                     hasChanges = true;
                   }
-                  console.log(`Book ${book.title} exists, skipping content overwrite.`);
+                  // Book already exists, skip content overwrite
                } else {
                   // New book — check cloud for existing progress (auto-track)
                   if (cloudUser && book.fileHash) {
@@ -395,7 +347,7 @@ const App: React.FC = () => {
                       if (cloudProg && cloudProg.last_read_at > 0) {
                         book.currentPageIndex = cloudProg.current_page_index;
                         book.lastReadAt = cloudProg.last_read_at;
-                        console.log(`[CloudSync] Auto-restored progress for "${book.title}" from cloud.`);
+
                       }
                     } catch (e) {
                       console.warn('[CloudSync] Failed to pull progress on import:', e);
@@ -459,9 +411,7 @@ const App: React.FC = () => {
   const handleLogout = async () => {
     try {
       await signOut();
-      // Don't manually set state here - let onAuthStateChange handle it
-      // This prevents race conditions and ensures proper cleanup
-      console.log('[Auth] Signed out successfully');
+      // State cleanup is handled by onAuthStateChange listener
     } catch (err) {
       console.error('[Auth] Logout failed:', err);
       alert('退出登录失败，请重试');
@@ -508,7 +458,7 @@ const App: React.FC = () => {
       }
 
       setSyncStatus('success');
-      console.log(`[CloudSync] Sync complete: pulled=${result.pulled.length}, pushed=${result.pushed}, errors=${result.errors}`);
+
       setTimeout(() => setSyncStatus(prev => prev === 'success' ? 'idle' : prev), 3000);
     } catch (err) {
       console.error("[CloudSync] Manual sync failed:", err);
@@ -695,7 +645,7 @@ const App: React.FC = () => {
         const cloudProg = await pullProgress(cloudUser.id, book.fileHash);
         if (cloudProg && cloudProg.last_read_at > book.lastReadAt) {
           validPageIndex = Math.min(cloudProg.current_page_index, maxIndex);
-          console.log(`[CloudSync] Auto-restored progress for "${book.title}" from cloud (page ${validPageIndex}).`);
+
         }
       } catch (e) {
         console.warn('[CloudSync] Failed to pull progress on open:', e);

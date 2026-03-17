@@ -35,37 +35,31 @@ export const isSupabaseConfigured = (): boolean => {
   return !!(SUPABASE_URL && SUPABASE_ANON_KEY);
 };
 
-// Initialize and handle OAuth callback errors
+/**
+ * Initialize auth: handle OAuth callback and clean up URL hash.
+ * With implicit flow, the Supabase client (`detectSessionInUrl: true`)
+ * automatically extracts tokens from the URL hash. We just need to
+ * handle errors and clean up the hash afterward.
+ */
 export const initAuth = async (): Promise<void> => {
   const supabase = getSupabase();
   if (!supabase) return;
-  
-  // Check if there's an error in the URL hash (OAuth callback error)
-  const hashParams = new URLSearchParams(window.location.hash.substring(1));
-  const error = hashParams.get('error');
-  const errorDescription = hashParams.get('error_description');
-  
-  if (error) {
-    console.error('[Auth] OAuth error:', error, errorDescription);
-    // Clear the hash to prevent repeated errors
-    window.history.replaceState(null, '', window.location.pathname);
-    return;
-  }
-  
-  // Try to get the session from the URL (OAuth callback)
-  try {
-    const { data, error: sessionError } = await supabase.auth.getSession();
-    if (sessionError) {
-      console.error('[Auth] Session error:', sessionError.message);
-    } else if (data.session) {
-      console.log('[Auth] Session restored successfully');
+
+  // Check for OAuth error in URL hash
+  const hash = window.location.hash;
+  if (hash) {
+    const hashParams = new URLSearchParams(hash.substring(1));
+    const error = hashParams.get('error');
+    if (error) {
+      console.error('[Auth] OAuth callback error:', error, hashParams.get('error_description'));
     }
-  } catch (e) {
-    console.error('[Auth] Failed to get session:', e);
   }
-  
-  // Clear the URL hash after processing
-  if (window.location.hash.includes('access_token') || window.location.hash.includes('error')) {
+
+  // Let Supabase restore the session (from hash tokens or persisted storage)
+  await supabase.auth.getSession();
+
+  // Clean up URL hash after OAuth callback processing
+  if (hash.includes('access_token') || hash.includes('error')) {
     window.history.replaceState(null, '', window.location.pathname);
   }
 };
@@ -76,20 +70,11 @@ export const initAuth = async (): Promise<void> => {
 
 /**
  * Get the redirect URL for OAuth callbacks.
- * Priority:
- * 1. REDIRECT_URL from env (for production)
- * 2. window.location.origin + pathname (fallback)
+ * Uses REDIRECT_URL env var in production, falls back to current origin.
  */
 const getRedirectURL = (): string => {
   const envRedirect = (process.env as any).REDIRECT_URL;
-  console.log('[Auth] REDIRECT_URL from env:', envRedirect);
-  console.log('[Auth] Fallback URL:', window.location.origin + window.location.pathname);
-  if (envRedirect) {
-    console.log('[Auth] Using env REDIRECT_URL:', envRedirect);
-    return envRedirect;
-  }
-  // Fallback to current URL
-  console.log('[Auth] Using fallback URL');
+  if (envRedirect) return envRedirect;
   return window.location.origin + window.location.pathname;
 };
 
