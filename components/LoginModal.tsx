@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
-import { X, Github, Mail, Loader2 } from 'lucide-react';
-import { signInWithGitHub, signInWithGoogle, signInWithEmail } from '../supabase';
+import { X, Mail, Loader2 } from 'lucide-react';
+import { signInWithGoogle, signInWithEmail } from '../supabase';
 import { translations, Locale } from '../locales';
 
 interface LoginModalProps {
@@ -49,15 +49,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onClose, language }) => 
         <div className="px-6 pb-6 pt-4 space-y-3">
           {mode === 'social' ? (
             <>
-              {/* GitHub */}
-              <button
-                onClick={async () => { setIsLoading(true); await signInWithGitHub(); }}
-                disabled={isLoading}
-                className="w-full flex items-center justify-center gap-3 px-4 py-2.5 rounded-xl border border-gray-200 text-gray-800 font-medium text-sm hover:bg-gray-50 transition-colors disabled:opacity-50"
-              >
-                <Github className="w-5 h-5" />
-                {t.login_github}
-              </button>
+              {/* (GitHub login removed) */}
 
               {/* Google */}
               <button
