@@ -16,6 +16,8 @@ export default defineConfig(({ mode }) => {
         'process.env.SUPABASE_URL': JSON.stringify(env.SUPABASE_URL),
         'process.env.SUPABASE_ANON_KEY': JSON.stringify(env.SUPABASE_ANON_KEY),
         'process.env.REDIRECT_URL': JSON.stringify(env.REDIRECT_URL || ''),
+        // Inject package version into the app as a global constant
+        '__APP_VERSION__': JSON.stringify(process.env.npm_package_version || env.npm_package_version || '0.0.0'),
       },
       resolve: {
         alias: {
