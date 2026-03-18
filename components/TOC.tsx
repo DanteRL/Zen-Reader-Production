@@ -46,12 +46,15 @@ export const TOC: React.FC<TOCProps & { language?: Locale }> = ({
   // Auto-scroll to current chapter when opening
   useEffect(() => {
     if (isOpen && activeItemRef.current && listRef.current) {
-      activeItemRef.current.scrollIntoView({
-        behavior: 'auto',
-        block: 'center',
-      });
+      // Use a small delay to ensure the DOM is fully rendered
+      setTimeout(() => {
+        activeItemRef.current?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center',
+        });
+      }, 100);
     }
-  }, [isOpen]);
+  }, [isOpen, currentChapterIndex]);
 
   if (!isOpen) return null;
 

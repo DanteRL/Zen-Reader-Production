@@ -671,6 +671,11 @@ export const Bookshelf: React.FC<BookshelfProps> = ({
                </div>
            </div>
         )}
+
+        {/* Version Number */}
+        <div className="fixed bottom-4 right-4 text-[10px] text-gray-300 font-light pointer-events-none">
+          v0.0.0
+        </div>
       </div>
     </div>
   );
