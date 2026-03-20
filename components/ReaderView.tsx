@@ -474,9 +474,6 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   const scrollTimeoutRef = useRef<number | null>(null);
   const lastKeyTime = useRef<number>(0);
   const controlsTimerRef = useRef<number | null>(null);
-
-  // Smooth Scroll Refs
-  const scrollRafId = useRef<number | null>(null);
   
   const [isTOCOpen, setIsTOCOpen] = useState(false);
   const [activeParagraphIndex, setActiveParagraphIndex] = useState<number | null>(null);
@@ -800,13 +797,6 @@ ${langInstruction}`;
       }
   };
 
-  const stopSmoothScroll = useCallback(() => {
-      if (scrollRafId.current) {
-          cancelAnimationFrame(scrollRafId.current);
-          scrollRafId.current = null;
-      }
-  }, []);
-
   // Keyboard Handlers
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -869,13 +859,11 @@ ${langInstruction}`;
       
       // 2. Vertical Navigation
       if (isVertical) {
-         e.preventDefault();
-
          // Case A: Focus Mode (Paragraph Navigation)
          if (settings.focusMode && !isPdf) {
+            e.preventDefault();
             const totalParagraphs = contentRef.current?.querySelectorAll('div[data-index]').length || 0;
             const currentIndex = activeParagraphIndex ?? -1;
-            const step = (e.repeat) ? 1 : 1; 
             
             const now = Date.now();
             // Simple throttle for paragraph navigation
@@ -883,56 +871,16 @@ ${langInstruction}`;
             lastKeyTime.current = now;
 
             if (e.key === 'ArrowDown') {
-               scrollToParagraph(Math.min(currentIndex + step, totalParagraphs - 1));
+               scrollToParagraph(Math.min(currentIndex + 1, totalParagraphs - 1));
             } else {
-               scrollToParagraph(Math.max(currentIndex - step, 0));
+               scrollToParagraph(Math.max(currentIndex - 1, 0));
             }
             return;
          }
 
-         // Case B: Normal Reading (Custom Silky Smooth Scroll)
-         if (!isPdf || (isPdf && settings.pdfViewMode === 'scroll')) {
-             const direction = e.key === 'ArrowDown' ? 1 : -1;
-             stopSmoothScroll(); // Ensure clean state
-
-             if (e.repeat) {
-                // HOLD MODE: Continuous Linear Scroll
-                // rAF loop that moves X pixels per frame. 
-                // Immediate response, no "smooth" easing lag.
-                const speed = 25; // Pixels per frame. Adjust for desired speed.
-                const scrollStep = () => {
-                   window.scrollBy(0, direction * speed);
-                   scrollRafId.current = requestAnimationFrame(scrollStep);
-                };
-                scrollRafId.current = requestAnimationFrame(scrollStep);
-             } else {
-                // SINGLE PRESS MODE: Custom Cubic Ease-Out
-                // We implement our own animation to ensure consistency across browsers (Safari vs Chrome)
-                const distance = Math.max(150, window.innerHeight * 0.35); // 35% screen height
-                const targetY = window.scrollY + (direction * distance);
-                const startY = window.scrollY;
-                const duration = 300; // ms
-                const startTime = performance.now();
-
-                const animate = (time: number) => {
-                   const elapsed = time - startTime;
-                   if (elapsed >= duration) {
-                      window.scrollTo(0, targetY);
-                      return;
-                   }
-                   
-                   // Ease Out Cubic function: 1 - (1 - t)^3
-                   const t = elapsed / duration;
-                   const ease = 1 - Math.pow(1 - t, 3);
-                   const currentY = startY + (direction * distance * ease);
-                   
-                   window.scrollTo(0, currentY);
-                   scrollRafId.current = requestAnimationFrame(animate);
-                };
-                scrollRafId.current = requestAnimationFrame(animate);
-             }
-             return;
-         }
+         // Case B: Normal Reading - let browser handle natively
+         // Native ArrowUp/ArrowDown/Space/PageUp/PageDown scrolling is the smoothest
+         return;
       }
 
       // 3. Other Shortcuts
@@ -952,22 +900,12 @@ ${langInstruction}`;
       }
     };
 
-    const handleKeyUp = (e: KeyboardEvent) => {
-        const isVertical = e.key === 'ArrowUp' || e.key === 'ArrowDown';
-        if (isVertical) {
-            stopSmoothScroll();
-        }
-    };
-
     window.addEventListener('keydown', handleKeyDown, { passive: false });
-    window.addEventListener('keyup', handleKeyUp, { passive: false });
     
     return () => {
         window.removeEventListener('keydown', handleKeyDown);
-        window.removeEventListener('keyup', handleKeyUp);
-        stopSmoothScroll();
     };
-  }, [book.currentPageIndex, totalUnits, isTOCOpen, activeEntity, settings.focusMode, settings.volumeKeyNav, activeParagraphIndex, scrollToParagraph, showControls, contextMenu, isPdf, settings.pdfViewMode, stopSmoothScroll]);
+  }, [book.currentPageIndex, totalUnits, isTOCOpen, activeEntity, settings.focusMode, settings.volumeKeyNav, activeParagraphIndex, scrollToParagraph, showControls, contextMenu, isPdf, settings.pdfViewMode]);
 
   useEffect(() => {
     if (!settings.focusMode || !contentRef.current || isPdf) return;
