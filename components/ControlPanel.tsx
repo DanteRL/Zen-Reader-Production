@@ -3,7 +3,7 @@
 import React from 'react';
 import { 
   X, Sun, Moon, Coffee, Minus, Plus, AlignLeft, AlignJustify, Target, Sparkles, Layers, EyeOff, Clock, Languages,
-  Scroll, File, BookOpen, ZoomIn, ZoomOut, RotateCcw, Key, Globe, Type
+  Scroll, File, BookOpen, ZoomIn, ZoomOut, RotateCcw, Key, Globe, Type, Smartphone, Volume2
 } from 'lucide-react';
 import { ReaderSettings, ThemeType, FontFamily, AILanguage, PdfViewMode, AppLanguage } from '../types';
 import { THEMES, FONT_LABELS, FONT_FAMILIES } from '../constants';
@@ -468,6 +468,62 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
 
               </div>
             )}
+          </section>
+
+          {/* Mobile Settings */}
+          <section className="space-y-4 pt-4 border-t border-gray-200/20">
+             <h3 className="text-xs uppercase tracking-wider opacity-60 font-bold">{t.mobile_settings}</h3>
+             
+             {/* Orientation Lock */}
+             <div className="space-y-2">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                   <Smartphone className="w-4 h-4" />
+                   <span>{t.orientation_lock}</span>
+                </div>
+                <div className={`flex p-1 rounded-lg ${themeStyles.active}`}>
+                   {[
+                     { value: 'none', label: t.orientation_none },
+                     { value: 'portrait', label: t.orientation_portrait },
+                     { value: 'landscape', label: t.orientation_landscape },
+                   ].map((opt) => (
+                     <button
+                       key={opt.value}
+                       onClick={() => onUpdateSettings({ orientationLock: opt.value as 'none' | 'portrait' | 'landscape' })}
+                       className={`
+                         flex-1 py-1.5 text-xs font-medium rounded-md transition-all
+                         ${settings.orientationLock === opt.value ? 'bg-white shadow-sm text-gray-900' : 'opacity-60 hover:opacity-100'}
+                       `}
+                     >
+                       {opt.label}
+                     </button>
+                   ))}
+                </div>
+             </div>
+
+             {/* Volume Key Navigation */}
+             <div className="flex items-center justify-between">
+                <div className="flex flex-col gap-0.5">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                     <Volume2 className="w-4 h-4" />
+                     <span>{t.volume_key_nav}</span>
+                  </div>
+                  <span className="text-[10px] opacity-50 pl-6">{t.volume_key_desc}</span>
+                </div>
+                <button
+                  onClick={() => onUpdateSettings({ volumeKeyNav: !settings.volumeKeyNav })}
+                  className={`
+                    relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0
+                    ${settings.volumeKeyNav ? 'bg-blue-500' : 'bg-gray-300'}
+                  `}
+                >
+                  <span
+                    className={`
+                      inline-block h-4 w-4 transform rounded-full bg-white transition-transform
+                      ${settings.volumeKeyNav ? 'translate-x-6' : 'translate-x-1'}
+                    `}
+                  />
+                </button>
+             </div>
           </section>
 
           {/* App Interface Language */}

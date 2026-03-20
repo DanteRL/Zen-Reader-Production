@@ -118,6 +118,15 @@ export const translations = {
     text_conv_none: '原文',
     text_conv_cn2tw: '繁体',
     text_conv_tw2cn: '简体',
+
+    // Mobile
+    mobile_settings: '移动设备',
+    orientation_lock: '屏幕方向锁定',
+    orientation_none: '跟随系统',
+    orientation_portrait: '竖屏',
+    orientation_landscape: '横屏',
+    volume_key_nav: '音量键翻页',
+    volume_key_desc: '使用音量+/-键进行翻页',
   },
   en: {
     // Bookshelf
@@ -234,5 +243,14 @@ export const translations = {
     text_conv_none: 'Original',
     text_conv_cn2tw: 'Traditional',
     text_conv_tw2cn: 'Simplified',
+
+    // Mobile
+    mobile_settings: 'Mobile',
+    orientation_lock: 'Screen Orientation',
+    orientation_none: 'Auto',
+    orientation_portrait: 'Portrait',
+    orientation_landscape: 'Landscape',
+    volume_key_nav: 'Volume Key Navigation',
+    volume_key_desc: 'Use volume +/- keys to turn pages',
   }
 };

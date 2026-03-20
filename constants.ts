@@ -41,6 +41,10 @@ export const DEFAULT_SETTINGS = {
   
   // Text Conversion Default
   textConversion: 'none' as const,
+  
+  // Mobile Defaults
+  orientationLock: 'none' as const,
+  volumeKeyNav: true,
 };
 
 export const CHARS_PER_PAGE_ESTIMATE = 2000;

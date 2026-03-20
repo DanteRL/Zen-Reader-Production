@@ -508,6 +508,32 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   
   const currentChapter = isPdf ? null : book.chapters[book.currentPageIndex];
 
+  // Screen Orientation Lock
+  useEffect(() => {
+    const lockOrientation = async () => {
+      const lock = settings.orientationLock;
+      if (!lock || lock === 'none') return;
+      try {
+        const screenOrientation = (screen as any).orientation;
+        if (screenOrientation?.lock) {
+          await screenOrientation.lock(lock === 'portrait' ? 'portrait-primary' : 'landscape-primary');
+        }
+      } catch (e) {
+        // Orientation lock is best-effort; not all browsers/contexts support it
+        console.warn('[Orientation] lock failed:', e);
+      }
+    };
+    lockOrientation();
+    return () => {
+      try {
+        const screenOrientation = (screen as any).orientation;
+        if (screenOrientation?.unlock) {
+          screenOrientation.unlock();
+        }
+      } catch (_) { /* ignore */ }
+    };
+  }, [settings.orientationLock]);
+
   // Track window resize for PDF auto-fit
   useEffect(() => {
     const handleResize = () => {
@@ -786,6 +812,38 @@ ${langInstruction}`;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
 
+      // Volume Key Navigation (mobile devices)
+      if (settings.volumeKeyNav && (e.key === 'AudioVolumeUp' || e.key === 'AudioVolumeDown' || e.key === 'VolumeUp' || e.key === 'VolumeDown')) {
+          e.preventDefault();
+          e.stopPropagation();
+          const isNext = e.key === 'AudioVolumeDown' || e.key === 'VolumeDown';
+          if (isPdf && settings.pdfViewMode !== 'scroll') {
+              navigatePdf(isNext ? 'next' : 'prev');
+          } else if (!isPdf) {
+              if (settings.focusMode) {
+                  // In focus mode: navigate paragraphs
+                  const totalParagraphs = contentRef.current?.querySelectorAll('div[data-index]').length || 0;
+                  const currentIndex = activeParagraphIndex ?? -1;
+                  if (isNext) {
+                      scrollToParagraph(Math.min(currentIndex + 1, totalParagraphs - 1));
+                  } else {
+                      scrollToParagraph(Math.max(currentIndex - 1, 0));
+                  }
+              } else {
+                  // Normal mode: scroll by a screenful
+                  const direction = isNext ? 1 : -1;
+                  const distance = window.innerHeight * 0.85;
+                  window.scrollBy({ top: direction * distance, behavior: 'smooth' });
+              }
+          } else {
+              // PDF scroll mode: scroll by a screenful
+              const direction = isNext ? 1 : -1;
+              const distance = window.innerHeight * 0.85;
+              window.scrollBy({ top: direction * distance, behavior: 'smooth' });
+          }
+          return;
+      }
+
       const isVertical = e.key === 'ArrowUp' || e.key === 'ArrowDown';
       const isHorizontal = e.key === 'ArrowLeft' || e.key === 'ArrowRight';
 
@@ -909,7 +967,7 @@ ${langInstruction}`;
         window.removeEventListener('keyup', handleKeyUp);
         stopSmoothScroll();
     };
-  }, [book.currentPageIndex, totalUnits, isTOCOpen, activeEntity, settings.focusMode, activeParagraphIndex, scrollToParagraph, showControls, contextMenu, isPdf, settings.pdfViewMode, stopSmoothScroll]);
+  }, [book.currentPageIndex, totalUnits, isTOCOpen, activeEntity, settings.focusMode, settings.volumeKeyNav, activeParagraphIndex, scrollToParagraph, showControls, contextMenu, isPdf, settings.pdfViewMode, stopSmoothScroll]);
 
   useEffect(() => {
     if (!settings.focusMode || !contentRef.current || isPdf) return;

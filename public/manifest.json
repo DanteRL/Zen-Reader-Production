@@ -4,7 +4,6 @@
   "description": "A distraction-free, aesthetically pleasing web-based reader for TXT, EPUB and PDF.",
   "start_url": "/",
   "display": "standalone",
-  "orientation": "any",
   "background_color": "#ffffff",
   "theme_color": "#3b82f6",
   "categories": ["books", "education", "productivity"],

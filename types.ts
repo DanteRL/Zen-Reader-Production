@@ -46,6 +46,10 @@ export interface ReaderSettings {
   
   // Text Conversion
   textConversion: 'none' | 'cn2tw' | 'tw2cn';
+  
+  // Mobile
+  orientationLock: 'none' | 'portrait' | 'landscape';
+  volumeKeyNav: boolean;
 }
 
 export interface Chapter {
