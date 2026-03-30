@@ -470,6 +470,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 }) => {
   const t = translations[language];
   const contentRef = useRef<HTMLDivElement>(null);
+  const pendingAnchorRef = useRef<string | null>(null);
   const isAutoScrolling = useRef(false);
   const scrollTimeoutRef = useRef<number | null>(null);
   const lastKeyTime = useRef<number>(0);
@@ -668,19 +669,52 @@ ${langInstruction}`;
     }
   }, [book.currentPageIndex, settings.focusMode, isPdf, settings.pdfViewMode]);
 
+  // Listen for anchor scroll requests from TOC
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail: any = (e as CustomEvent).detail;
+      if (detail && detail.anchor) {
+        pendingAnchorRef.current = detail.anchor;
+      }
+    };
+    window.addEventListener('zenreader-scroll-to-anchor', handler as EventListener);
+    return () => window.removeEventListener('zenreader-scroll-to-anchor', handler as EventListener);
+  }, []);
+
+  // After chapter content updates, if there's a pending anchor, scroll to it
+  useEffect(() => {
+    if (!contentRef.current) return;
+    const anchor = pendingAnchorRef.current;
+    if (!anchor) return;
+    // Small delay to ensure DOM nodes exist
+    setTimeout(() => {
+      const el = contentRef.current?.querySelector(`#${CSS.escape(anchor)}`) as HTMLElement | null;
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      pendingAnchorRef.current = null;
+    }, 200);
+  }, [book.currentPageIndex, convertedHtml]);
+
   // --- Text Conversion Logic ---
   const [convertedContent, setConvertedContent] = useState<string>('');
+  // If chapter provides HTML, keep a sanitized HTML copy for rendering
+  const [convertedHtml, setConvertedHtml] = useState<string>('');
+  const [imageModalUrl, setImageModalUrl] = useState<string | null>(null);
   const converterRef = useRef<((text: string) => string) | null>(null);
 
   useEffect(() => {
     // If PDF, or no chapter, or conversion is "none", just skip OpenCC
     if (isPdf || !currentChapter) {
       setConvertedContent('');
+      setConvertedHtml('');
       return;
     }
 
     if (settings.textConversion === 'none') {
       setConvertedContent(currentChapter.content);
+      // Use raw HTML if available
+      setConvertedHtml(currentChapter.html || '');
       return;
     }
 
@@ -693,10 +727,13 @@ ${langInstruction}`;
       }
       
       if (converterRef.current) {
-         setConvertedContent(converterRef.current(currentChapter.content));
+        setConvertedContent(converterRef.current(currentChapter.content));
       } else {
-         setConvertedContent(currentChapter.content);
+        setConvertedContent(currentChapter.content);
       }
+      // For now, when conversion is requested, we won't convert HTML nodes.
+      // Clear convertedHtml to force text-mode rendering.
+      setConvertedHtml('');
     } catch (e) {
       console.error("OpenCC conversion error:", e);
       setConvertedContent(currentChapter.content); // fallback
@@ -924,6 +961,17 @@ ${langInstruction}`;
     return () => observer.disconnect();
   }, [settings.focusMode, currentChapter, isPdf]);
 
+  // Set cursor style for images and attach delegated click handler via wrapper (onClick below)
+  useEffect(() => {
+    if (!contentRef.current) return;
+    const imgs = Array.from(contentRef.current.querySelectorAll('img')) as HTMLImageElement[];
+    imgs.forEach(img => {
+      img.style.cursor = 'zoom-in';
+      img.style.maxWidth = '100%';
+      img.style.height = 'auto';
+    });
+  }, [convertedHtml, book.currentPageIndex]);
+
   const isParagraphFocused = (index: number) => {
     if (!settings.focusMode || activeParagraphIndex === null) return true;
     const count = settings.focusParagraphCount || 1; 
@@ -931,6 +979,36 @@ ${langInstruction}`;
     const start = activeParagraphIndex - half;
     const end = activeParagraphIndex + half + (count % 2 === 0 ? -1 : 0);
     return index >= start && index <= end;
+  };
+
+  // Simple HTML sanitizer: remove <script> and on* attributes
+  const sanitizeHtml = (raw: string) => {
+    if (!raw) return '';
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(raw, 'text/html');
+      // Remove script and style tags
+      doc.querySelectorAll('script, style').forEach(n => n.remove());
+      // Remove event handler attributes and javascript: hrefs
+      const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_ELEMENT, null);
+      const toProcess: Element[] = [];
+      let node = walker.nextNode();
+      while (node) {
+        toProcess.push(node as Element);
+        node = walker.nextNode();
+      }
+      toProcess.forEach(el => {
+        // Remove attributes starting with on (onclick, onload...)
+        Array.from(el.attributes).forEach(attr => {
+          if (/^on/i.test(attr.name)) el.removeAttribute(attr.name);
+          if (attr.name === 'href' && attr.value.trim().toLowerCase().startsWith('javascript:')) el.removeAttribute('href');
+        });
+      });
+      return doc.body.innerHTML;
+    } catch (e) {
+      console.warn('Sanitize failed', e);
+      return '';
+    }
   };
 
   const handlePdfPageVisible = useCallback((pageIdx: number) => {
@@ -1235,15 +1313,38 @@ ${langInstruction}`;
                 <h1 className="text-3xl font-bold mb-12 text-center opacity-80 pt-10">{currentChapter?.title}</h1>
               )}
 
-              {paragraphs.map((text, i) => (
-                <Paragraph 
-                  key={i}
-                  index={i}
-                  text={text}
-                  isActive={isParagraphFocused(i)}
-                  settings={settings}
+              {convertedHtml ? (
+                // Render preprocessed chapter HTML
+                <div
+                  className="prose max-w-none"
+                  ref={contentRef}
+                  onClick={(e) => {
+                    const target = e.target as HTMLElement;
+                    if (target && target.tagName === 'IMG') {
+                      const src = (target as HTMLImageElement).src;
+                      if (src) setImageModalUrl(src);
+                    }
+                  }}
+                  dangerouslySetInnerHTML={{ __html: sanitizeHtml(convertedHtml) }}
                 />
-              ))}
+              ) : (
+                paragraphs.map((text, i) => (
+                  <Paragraph 
+                    key={i}
+                    index={i}
+                    text={text}
+                    isActive={isParagraphFocused(i)}
+                    settings={settings}
+                  />
+                ))
+              )}
+
+              {/* Image preview modal */}
+              {imageModalUrl && (
+                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80" onClick={() => setImageModalUrl(null)}>
+                  <img src={imageModalUrl} alt="preview" className="max-w-[95%] max-h-[95%] shadow-lg" />
+                </div>
+              )}
 
               {!settings.focusMode && (
                 <div className="mt-20 flex justify-between gap-4 max-w-2xl mx-auto px-6 pb-32">
@@ -1285,6 +1386,7 @@ ${langInstruction}`;
         onSelectChapter={onPageChange}
         currentTheme={settings.theme}
         language={language}
+        toc={book.toc}
       />
     </div>
   );

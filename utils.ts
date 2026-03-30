@@ -146,7 +146,7 @@ export const ensurePdfLibraryLoaded = async () => {
  * Parses an EPUB file and extracts text chapters and cover image.
  * Uses epub.js (via CDN).
  */
-export const parseEpub = async (file: File): Promise<{ chapters: Chapter[], coverImage?: string, author?: string }> => {
+export const parseEpub = async (file: File): Promise<{ chapters: Chapter[], coverImage?: string, author?: string, toc?: any }> => {
   // Ensure libraries are present before proceeding
   await ensureEpubLibrariesLoaded();
 
@@ -187,21 +187,24 @@ export const parseEpub = async (file: File): Promise<{ chapters: Chapter[], cove
            // book.load(href) resolves to the document/content
            const doc = await book.load(item.href);
            
-           // If it's a document object, we extract text
-           let text = '';
-           if (typeof doc === 'string') {
-             // Sometimes it returns raw HTML string
-             const parser = new DOMParser();
-             const htmlDoc = parser.parseFromString(doc, 'text/html');
-             text = htmlDoc.body.textContent || '';
-           } else if (doc instanceof Document) {
-             text = doc.body.textContent || '';
-           } else if (doc && doc.textContent) {
-             text = doc.textContent;
-           }
+          // If it's a document object, we extract HTML and text
+             let text = '';
+             let html = '';
+             if (typeof doc === 'string') {
+               // Sometimes it returns raw HTML string
+               const parser = new DOMParser();
+               const htmlDoc = parser.parseFromString(doc, 'text/html');
+               html = htmlDoc.body.innerHTML || '';
+               text = htmlDoc.body.textContent || '';
+             } else if (doc instanceof Document) {
+               html = doc.body.innerHTML || '';
+               text = doc.body.textContent || '';
+             } else if (doc && doc.textContent) {
+               text = doc.textContent;
+             }
 
-           // Cleanup whitespace
-           text = text.trim();
+             // Cleanup whitespace
+             text = (text || '').trim();
            
            // Basic filter to ignore empty/utility files
            if (text.length > 50) { 
@@ -218,9 +221,91 @@ export const parseEpub = async (file: File): Promise<{ chapters: Chapter[], cove
                if (firstLine.length > 0 && firstLine.length < 50) title = firstLine;
              }
 
+             // Post-process images in HTML: convert to data URLs when possible
+             if (html && html.length > 0) {
+               try {
+                 const parser = new DOMParser();
+                 const docHtml = parser.parseFromString(html, 'text/html');
+                 const imgs = Array.from(docHtml.querySelectorAll('img')) as HTMLImageElement[];
+
+                 await Promise.all(imgs.map(async (img) => {
+                   try {
+                     const src = img.getAttribute('src') || img.src;
+                     if (!src) return;
+                     // Skip if already data URL
+                     if (src.startsWith('data:')) return;
+
+                     // Try fetching the image resource. Some src might be relative; attempt direct fetch first.
+                     let fetched: Response | null = null;
+                     try {
+                       fetched = await fetch(src);
+                     } catch (e) {
+                       // If fetch failed, try to resolve relative to the spine item href
+                       try {
+                         const base = item.href || '';
+                         const baseParts = base.split('/').slice(0, -1).join('/');
+                         const resolved = baseParts ? `${baseParts}/${src}` : src;
+                         fetched = await fetch(resolved);
+                       } catch (e2) {
+                         fetched = null;
+                       }
+                     }
+
+                     if (fetched && fetched.ok) {
+                       const blob = await fetched.blob();
+                       // Convert to data URL
+                       const dataUrl = await new Promise<string>((resolve) => {
+                         const r = new FileReader();
+                         r.onloadend = () => resolve(r.result as string);
+                         r.readAsDataURL(blob);
+                       });
+                       img.setAttribute('src', dataUrl);
+                       return;
+                     }
+
+                     // If fetch failed (CORS or relative paths), try epub.js resource API if available
+                     try {
+                       if ((book as any).resources && typeof (book as any).resources.get === 'function') {
+                         const res = await (book as any).resources.get(src);
+                         if (res) {
+                           // res might be a Blob, ArrayBuffer, or Uint8Array
+                           let blobFromRes: Blob | null = null;
+                           if (res instanceof Blob) blobFromRes = res;
+                           else if (res instanceof ArrayBuffer) blobFromRes = new Blob([res]);
+                           else if (res.buffer && res.buffer instanceof ArrayBuffer) blobFromRes = new Blob([res.buffer]);
+
+                           if (blobFromRes) {
+                             const dataUrl = await new Promise<string>((resolve) => {
+                               const r = new FileReader();
+                               r.onloadend = () => resolve(r.result as string);
+                               r.readAsDataURL(blobFromRes as Blob);
+                             });
+                             img.setAttribute('src', dataUrl);
+                           }
+                         }
+                       }
+                     } catch (resErr) {
+                       // ignore resource fetch errors
+                       console.warn('Resource API image fetch failed', resErr);
+                     }
+                   } catch (imgErr) {
+                     // ignore individual image errors
+                     console.warn('Image processing failed for', img, imgErr);
+                   }
+                 }));
+
+                 // Serialize back to HTML
+                 html = docHtml.body.innerHTML || html;
+               } catch (procErr) {
+                 console.warn('Failed to process chapter HTML images', procErr);
+               }
+             }
+
              chapters.push({
                title: title,
-               content: text
+               content: text,
+               html: html || undefined,
+               href: item.href
              });
            }
         }
@@ -250,7 +335,9 @@ export const parseEpub = async (file: File): Promise<{ chapters: Chapter[], cove
           return;
         }
 
-        resolve({ chapters, coverImage, author });
+        // Try to extract navigation TOC if epub.js provides it
+        const toc = (book.navigation && book.navigation.toc) ? book.navigation.toc : undefined;
+        resolve({ chapters, coverImage, author, toc });
       } catch (err) {
         console.error("EPUB Parse Error", err);
         reject(err);

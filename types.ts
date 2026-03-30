@@ -55,6 +55,11 @@ export interface ReaderSettings {
 export interface Chapter {
   title: string;
   content: string;
+  // `html` contains the raw chapter HTML (innerHTML) when available.
+  // `content` remains the plain-text fallback used in some places.
+  html?: string;
+  // Original href in the EPUB spine/navigation (e.g. "chapter1.xhtml#sec1")
+  href?: string;
   pageNumber?: number; // For PDF, 1-based page number indicating start of chapter
 }
 
@@ -73,6 +78,7 @@ export interface BookData {
   pageCount?: number; // Total pages for PDF
   filename?: string; // Original filename for file system operations
   fileHash?: string; // SHA-256 hash for cross-device sync
+  toc?: any; // Optional EPUB navigation TOC structure
 }
 
 export interface AIEntityData {

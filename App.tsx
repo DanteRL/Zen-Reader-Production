@@ -208,6 +208,7 @@ const App: React.FC = () => {
       let pdfArrayBuffer: ArrayBuffer | undefined;
       let pageCount: number | undefined;
       let fileHash: string | undefined;
+      let toc: any = undefined;
       
       try {
         // Compute file hash for cross-device sync
@@ -221,6 +222,7 @@ const App: React.FC = () => {
           chapters = result.chapters;
           coverImage = result.coverImage;
           author = result.author;
+          toc = (result as any).toc;
           content = chapters.map(c => c.content).join('\n\n'); 
         } else if (lowerName.endsWith('.pdf')) {
           // Parse PDF
@@ -276,6 +278,7 @@ const App: React.FC = () => {
           createdAt: Date.now(),
           lastReadAt: Date.now(),
           coverImage: coverImage,
+          toc: toc,
           pdfArrayBuffer: pdfArrayBuffer,
           pageCount: pageCount,
           filename: file.name, // Store original filename for sync operations

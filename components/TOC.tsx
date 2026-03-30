@@ -13,6 +13,7 @@ interface TOCProps {
   currentChapterIndex: number; // This represents Chapter Index (EPUB) OR Page Index (PDF)
   onSelectChapter: (index: number) => void;
   currentTheme: ThemeType;
+  toc?: any; // optional nested TOC from epub.js
   // Note: We don't receive language prop here from ReaderView, but we can default to 'zh' if not provided 
   // or update ReaderView to pass it. ReaderView passes it in the updated code.
   // Wait, I didn't update TOCProps in ReaderView call. Let me check the ReaderView change.
@@ -36,6 +37,7 @@ export const TOC: React.FC<TOCProps & { language?: Locale }> = ({
   currentChapterIndex,
   onSelectChapter,
   currentTheme,
+  toc,
   language = 'en'
 }) => {
   const t = translations[language];
@@ -55,6 +57,54 @@ export const TOC: React.FC<TOCProps & { language?: Locale }> = ({
       }, 100);
     }
   }, [isOpen, currentChapterIndex]);
+
+  // Render nested toc items recursively
+  const renderTocItems = (items: any[], depth = 0) => {
+    return items.map((it, idx) => {
+      const label = it.label || it.text || 'Untitled';
+      const href: string | undefined = it.href;
+      const children = it.subitems || it.children || it.nav || null;
+
+      // Find a matching chapter index by href (loose matching)
+      const findChapterIndex = (href?: string) => {
+        if (!href) return -1;
+        const baseHref = href.split('#')[0];
+        const idx = chapters.findIndex(c => {
+          if (!c.href) return false;
+          const chBase = c.href.split('#')[0];
+          return chBase === baseHref || baseHref.includes(chBase) || chBase.includes(baseHref);
+        });
+        return idx;
+      };
+
+      const chapterIndex = findChapterIndex(href);
+
+      return (
+        <div key={`${depth}-${idx}`} className={`pl-${Math.min(depth * 4, 16)} py-1`}> 
+          <button
+            onClick={() => {
+              if (chapterIndex >= 0) {
+                onSelectChapter(chapterIndex);
+              }
+              if (href && href.includes('#')) {
+                const anchor = href.split('#')[1];
+                try { window.dispatchEvent(new CustomEvent('zenreader-scroll-to-anchor', { detail: { anchor } })); } catch (e) {}
+              }
+              onClose();
+            }}
+            className={`w-full text-left px-4 py-2 text-sm ${themeStyles.hover} transition-colors`}
+          >
+            <span className="line-clamp-2">{label}</span>
+          </button>
+          {children && Array.isArray(children) && (
+            <div className="pl-4">
+              {renderTocItems(children, depth + 1)}
+            </div>
+          )}
+        </div>
+      );
+    });
+  };
 
   if (!isOpen) return null;
 
@@ -95,7 +145,13 @@ export const TOC: React.FC<TOCProps & { language?: Locale }> = ({
           ref={listRef}
           className="flex-1 overflow-y-auto scrollbar-thin"
         >
-          {chapters.map((chapter, index) => {
+          {toc && Array.isArray(toc) ? (
+            // Render nested TOC from epub navigation
+            <div>
+              {renderTocItems(toc)}
+            </div>
+          ) : (
+            chapters.map((chapter, index) => {
             // Logic for Highlighting:
             // Case 1: PDF (Has pageNumber). currentChapterIndex is absolute page number (0-based)
             // Case 2: EPUB/TXT. currentChapterIndex is chapter index.
@@ -129,8 +185,13 @@ export const TOC: React.FC<TOCProps & { language?: Locale }> = ({
                 key={index}
                 ref={isActive ? activeItemRef : null}
                 onClick={() => {
-                  onSelectChapter(onClickIndex);
-                  onClose();
+                    onSelectChapter(onClickIndex);
+                    // Dispatch anchor event if chapter href contains anchor
+                    if (chapter.href && chapter.href.includes('#')) {
+                      const anchor = chapter.href.split('#')[1];
+                      try { window.dispatchEvent(new CustomEvent('zenreader-scroll-to-anchor', { detail: { anchor } })); } catch (e) {}
+                    }
+                    onClose();
                 }}
                 className={`
                   w-full text-left px-4 py-3 border-b text-sm transition-colors flex items-start gap-3
