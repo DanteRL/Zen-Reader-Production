@@ -7,7 +7,7 @@ import { DEFAULT_SETTINGS, THEME_COLORS } from './constants';
 import { parseChapters, parseEpub, parsePdf, generateId, extractMetadata, scanDirectoryForFiles } from './utils';
 import { initDB, saveBook, getAllBooks, updateBookProgress, deleteBook } from './db';
 import { Locale } from './locales';
-import { isSupabaseConfigured, onAuthStateChange, getCurrentUser, signOut, signInWithGitHub, signInWithGoogle, signInWithEmail, initAuth, type Session, type User } from './supabase';
+import { isSupabaseConfigured, onAuthStateChange, signOut, signInWithGitHub, signInWithGoogle, signInWithEmail, initAuth, type Session, type User } from './supabase';
 import { computeFileHash, pushProgress, pullProgress, syncAllProgress, fetchAllProgress, createBookLink, type CloudProgress, type LocalBookForSync } from './cloudSync';
 import { LoginModal } from './components/LoginModal';
 import { LinkProgressModal } from './components/LinkProgressModal';
@@ -45,13 +45,11 @@ const App: React.FC = () => {
   };
   const currentLocale = getLocale();
 
-  // Initialize DB and load books
+  // Initialize DB and load books (fast, local-only)
   useEffect(() => {
     const init = async () => {
       try {
         await initDB();
-        // Initialize Supabase auth and handle OAuth callbacks
-        await initAuth();
         const loadedBooks = await getAllBooks();
         setBooks(loadedBooks);
       } catch (e) {
@@ -61,6 +59,12 @@ const App: React.FC = () => {
       }
     };
     init();
+  }, []);
+
+  // Initialize Supabase auth in background (non-blocking)
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return;
+    initAuth().catch(e => console.error('[Auth] initAuth failed:', e));
   }, []);
 
   // Listen for Supabase auth state changes
@@ -133,14 +137,8 @@ const App: React.FC = () => {
       }
     });
 
-    // Check for existing session on initial load
-    getCurrentUser().then(async user => {
-      if (user) {
-        setCloudUser(user);
-        setIsSyncConnected(true);
-        await reloadAndSync(user.id);
-      }
-    });
+    // onAuthStateChange fires with INITIAL_SESSION for existing sessions,
+    // so there's no need for a separate getCurrentUser() call.
 
     return () => {
       data.subscription.unsubscribe();
