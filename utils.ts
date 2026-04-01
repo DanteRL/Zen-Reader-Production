@@ -132,8 +132,9 @@ export const parseChapters = (text: string): Chapter[] => {
         const out: Chapter[] = [];
         for (let i = 0; i < chs.length; i++) {
           const cur = chs[i];
-          if (cur.content.length < MIN_CHARS && out.length > 0) {
-            // Merge short chapter into previous one
+          const prevIsPreface = out.length > 0 && out[out.length - 1].title === 'Preface / Start';
+          // Only merge into previous if previous is NOT the Preface
+          if (cur.content.length < MIN_CHARS && out.length > 0 && !prevIsPreface) {
             out[out.length - 1].content = (out[out.length - 1].content + '\n\n' + cur.content).trim();
           } else {
             out.push({ title: cur.title, content: cur.content });
@@ -194,7 +195,8 @@ export const parseChapters = (text: string): Chapter[] => {
       const out: Chapter[] = [];
       for (let i = 0; i < chs.length; i++) {
         const cur = chs[i];
-        if (cur.content.length < MIN_CHARS && out.length > 0) {
+        const prevIsPreface = out.length > 0 && out[out.length - 1].title === 'Preface / Start';
+        if (cur.content.length < MIN_CHARS && out.length > 0 && !prevIsPreface) {
           out[out.length - 1].content = (out[out.length - 1].content + '\n\n' + cur.content).trim();
         } else {
           out.push({ title: cur.title, content: cur.content });
@@ -237,7 +239,8 @@ export const parseChapters = (text: string): Chapter[] => {
     const out: Chapter[] = [];
     for (let i = 0; i < chs.length; i++) {
       const cur = chs[i];
-      if (cur.content.length < MIN_CHARS && out.length > 0) {
+      const prevIsPreface = out.length > 0 && out[out.length - 1].title === 'Preface / Start';
+      if (cur.content.length < MIN_CHARS && out.length > 0 && !prevIsPreface) {
         out[out.length - 1].content = (out[out.length - 1].content + '\n\n' + cur.content).trim();
       } else {
         out.push({ title: cur.title, content: cur.content });
