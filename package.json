@@ -20,6 +20,8 @@
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "chardet": "^0.7.0",
+    "iconv-lite": "^0.6.3"
   }
 }

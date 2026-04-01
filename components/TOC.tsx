@@ -151,69 +151,56 @@ export const TOC: React.FC<TOCProps & { language?: Locale }> = ({
               {renderTocItems(toc)}
             </div>
           ) : (
-            chapters.map((chapter, index) => {
-            // Logic for Highlighting:
-            // Case 1: PDF (Has pageNumber). currentChapterIndex is absolute page number (0-based)
-            // Case 2: EPUB/TXT. currentChapterIndex is chapter index.
-            
-            let isActive = false;
-            let onClickIndex = index;
+            <>
+              {chapters.map((chapter, index) => {
+                // Logic for Highlighting (PDF vs chapter index)
+                let isActive = false;
+                let onClickIndex = index;
 
-            if (chapter.pageNumber !== undefined) {
-               // PDF Mode: 
-               // currentChapterIndex is 0-based page index.
-               // chapter.pageNumber is 1-based page index.
-               
-               // To determine active chapter in TOC:
-               // The active chapter is the one where chapter.pageNumber <= (currentChapterIndex + 1)
-               // AND the next chapter's pageNumber > (currentChapterIndex + 1)
-               
-               const currentPage = currentChapterIndex + 1;
-               const thisPage = chapter.pageNumber;
-               const nextPage = chapters[index + 1]?.pageNumber ?? 999999;
-               
-               isActive = currentPage >= thisPage && currentPage < nextPage;
-               onClickIndex = thisPage - 1; // Convert 1-based page back to 0-based index for onSelectChapter
-            } else {
-               // Standard Mode
-               isActive = index === currentChapterIndex;
-               onClickIndex = index;
-            }
+                if (chapter.pageNumber !== undefined) {
+                  const currentPage = currentChapterIndex + 1;
+                  const thisPage = chapter.pageNumber;
+                  const nextPage = chapters[index + 1]?.pageNumber ?? 999999;
+                  isActive = currentPage >= thisPage && currentPage < nextPage;
+                  onClickIndex = thisPage - 1;
+                } else {
+                  isActive = index === currentChapterIndex;
+                  onClickIndex = index;
+                }
 
-            return (
-              <button
-                key={index}
-                ref={isActive ? activeItemRef : null}
-                onClick={() => {
-                    onSelectChapter(onClickIndex);
-                    // Dispatch anchor event if chapter href contains anchor
-                    if (chapter.href && chapter.href.includes('#')) {
-                      const anchor = chapter.href.split('#')[1];
-                      try { window.dispatchEvent(new CustomEvent('zenreader-scroll-to-anchor', { detail: { anchor } })); } catch (e) {}
-                    }
-                    onClose();
-                }}
-                className={`
-                  w-full text-left px-4 py-3 border-b text-sm transition-colors flex items-start gap-3
-                  ${themeStyles.border}
-                  ${isActive 
-                    ? `bg-blue-500 text-white border-blue-600` 
-                    : `${themeStyles.hover} opacity-80 hover:opacity-100`
-                  }
-                `}
-              >
-                {isActive && <MapPin className="w-4 h-4 mt-0.5 flex-shrink-0 animate-pulse" />}
-                <span className={`line-clamp-2 ${!isActive && 'pl-7'}`}>
-                  {chapter.title}
-                </span>
-                {chapter.pageNumber && (
-                    <span className={`ml-auto text-xs ${isActive ? 'text-white/80' : 'text-gray-400'}`}>
-                        {chapter.pageNumber}
-                    </span>
-                )}
-              </button>
-            );
-          })}
+                const classes = [
+                  'w-full', 'text-left', 'px-4', 'py-3', 'border-b', 'text-sm', 'transition-colors', 'flex', 'items-start', 'gap-3',
+                  themeStyles.border,
+                  isActive ? 'bg-blue-500 text-white border-blue-600' : `${themeStyles.hover} opacity-80 hover:opacity-100`,
+                ].join(' ');
+
+                return (
+                  <div key={index}>
+                    <button
+                      ref={isActive ? activeItemRef : undefined}
+                      onClick={() => {
+                        onSelectChapter(onClickIndex);
+                        if (chapter.href && chapter.href.includes('#')) {
+                          const anchor = chapter.href.split('#')[1];
+                          try { window.dispatchEvent(new CustomEvent('zenreader-scroll-to-anchor', { detail: { anchor } })); } catch (e) {}
+                        }
+                        onClose();
+                      }}
+                      className={classes}
+                    >
+                      {isActive && <MapPin className="w-4 h-4 mt-0.5 flex-shrink-0 animate-pulse" />}
+                      <span className={isActive ? 'line-clamp-2' : 'line-clamp-2 pl-7'}>{chapter.title}</span>
+                      {chapter.pageNumber && (
+                        <span className={isActive ? 'ml-auto text-xs text-white/80' : 'ml-auto text-xs text-gray-400'}>
+                          {chapter.pageNumber}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
+            </>
+          )}
         </div>
       </div>
     </div>

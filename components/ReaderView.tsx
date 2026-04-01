@@ -499,12 +499,20 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   const [activeEntity, setActiveEntity] = useState<{data: AIEntityData, position: Position, isLoading?: boolean} | null>(null);
 
   const themeStyles = THEMES[settings.theme];
+  const accentBg = `var(--zenreader-accent, ${settings.theme === 'dark' ? 'rgba(36,36,36,0.85)' : settings.theme === 'sepia' ? 'rgba(242,240,233,0.85)' : 'rgba(255,255,255,0.9)'})`;
   
   const isPdf = !!book.pdfArrayBuffer;
   const totalUnits = isPdf ? (book.pageCount || 1) : book.chapters.length;
   const progress = calculateProgress(book.currentPageIndex, totalUnits);
   
   const currentChapter = isPdf ? null : book.chapters[book.currentPageIndex];
+
+  // Converted content / HTML for text chapters (OpenCC conversion etc.)
+  const [convertedContent, setConvertedContent] = useState<string>('');
+  // If chapter provides HTML, keep a sanitized HTML copy for rendering
+  const [convertedHtml, setConvertedHtml] = useState<string>('');
+  const [imageModalUrl, setImageModalUrl] = useState<string | null>(null);
+  const converterRef = useRef<((text: string) => string) | null>(null);
 
   // Screen Orientation Lock
   useEffect(() => {
@@ -697,11 +705,6 @@ ${langInstruction}`;
   }, [book.currentPageIndex, convertedHtml]);
 
   // --- Text Conversion Logic ---
-  const [convertedContent, setConvertedContent] = useState<string>('');
-  // If chapter provides HTML, keep a sanitized HTML copy for rendering
-  const [convertedHtml, setConvertedHtml] = useState<string>('');
-  const [imageModalUrl, setImageModalUrl] = useState<string | null>(null);
-  const converterRef = useRef<((text: string) => string) | null>(null);
 
   useEffect(() => {
     // If PDF, or no chapter, or conversion is "none", just skip OpenCC
@@ -1079,9 +1082,10 @@ ${langInstruction}`;
           transition-transform duration-300 ease-[cubic-bezier(0.2,0,0,1)]
           backdrop-blur-xl border-b shadow-sm
           ${themeStyles.text} 
-          ${settings.theme === 'dark' ? 'bg-[#242424]/80 border-white/5' : settings.theme === 'sepia' ? 'bg-[#F2F0E9]/80 border-[#8C857B]/10' : 'bg-white/80 border-gray-100'}
+          ${settings.theme === 'dark' ? 'border-white/5' : settings.theme === 'sepia' ? 'border-[#8C857B]/10' : 'border-gray-100'}
           ${showControls ? 'translate-y-0' : '-translate-y-full'}
         `}
+        style={{ backgroundColor: accentBg }}
         onClick={handleUserInteraction}
       >
          {/* Left: Back Button */}
@@ -1135,9 +1139,10 @@ ${langInstruction}`;
           transition-transform duration-300 ease-[cubic-bezier(0.2,0,0,1)]
           backdrop-blur-xl border-t shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.02)]
           ${themeStyles.text}
-          ${settings.theme === 'dark' ? 'bg-[#242424]/80 border-white/5' : settings.theme === 'sepia' ? 'bg-[#F2F0E9]/80 border-[#8C857B]/10' : 'bg-white/80 border-gray-100'}
+          ${settings.theme === 'dark' ? 'border-white/5' : settings.theme === 'sepia' ? 'border-[#8C857B]/10' : 'border-gray-100'}
           ${showControls ? 'translate-y-0' : 'translate-y-full'}
         `}
+        style={{ backgroundColor: accentBg }}
         onClick={handleUserInteraction}
       >
         {isPdf ? (

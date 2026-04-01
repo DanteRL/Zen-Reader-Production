@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Bookshelf } from './components/Bookshelf';
 import { ReaderView } from './components/ReaderView';
 import { ControlPanel } from './components/ControlPanel';
-import { BookData, ReaderSettings, Chapter } from './types';
+import { BookData, ReaderSettings, Chapter, ThemeType } from './types';
 import { DEFAULT_SETTINGS, THEME_COLORS } from './constants';
 import { parseChapters, parseEpub, parsePdf, generateId, extractMetadata, scanDirectoryForFiles } from './utils';
 import { initDB, saveBook, getAllBooks, updateBookProgress, deleteBook } from './db';
@@ -150,12 +150,119 @@ const App: React.FC = () => {
     localStorage.setItem('zenreader-settings', JSON.stringify(settings));
     
     // Only apply theme to body if in reader mode, otherwise use default gray for shelf
+    let appliedBg = '';
     if (view === 'reader') {
-      document.body.style.backgroundColor = THEME_COLORS[settings.theme].bg;
+      appliedBg = THEME_COLORS[settings.theme].bg;
+      document.body.style.backgroundColor = appliedBg;
     } else {
-       document.body.style.backgroundColor = THEME_COLORS.light.uiBg; // Default shelf bg
+       appliedBg = THEME_COLORS[ThemeType.LIGHT].uiBg || THEME_COLORS[settings.theme].bg; // Default shelf bg
+       document.body.style.backgroundColor = appliedBg;
     }
   }, [settings, view]);
+
+  // Dynamic accent color derived from the active book cover (for in-app accent only)
+  useEffect(() => {
+    const setAccentVar = (rgbaOrVar: string) => {
+      try {
+        document.documentElement.style.setProperty('--zenreader-accent', rgbaOrVar);
+      } catch (_) {}
+    };
+
+    const avgColorFromImage = (src?: string | null): Promise<{ hex: string; rgba: string } | null> => {
+      return new Promise(resolve => {
+        if (!src) return resolve(null);
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          try {
+            const canvas = document.createElement('canvas');
+            const w = 16; const h = 16;
+            canvas.width = w; canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return resolve(null);
+            ctx.drawImage(img, 0, 0, w, h);
+            const data = ctx.getImageData(0, 0, w, h).data;
+            let r = 0, g = 0, b = 0, count = 0;
+            for (let i = 0; i < data.length; i += 4) {
+              const alpha = data[i + 3];
+              if (alpha === 0) continue;
+              r += data[i]; g += data[i + 1]; b += data[i + 2]; count++;
+            }
+            if (count === 0) return resolve(null);
+            r = Math.round(r / count); g = Math.round(g / count); b = Math.round(b / count);
+            const hex = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+            const rgba = `rgba(${r}, ${g}, ${b}, 0.88)`;
+            resolve({ hex, rgba });
+          } catch (e) {
+            resolve(null);
+          }
+        };
+        img.onerror = () => resolve(null);
+        img.src = src as string;
+      });
+    };
+
+    let cancelled = false;
+    (async () => {
+      if (view !== 'reader') {
+        // clear accent for non-reader views
+        document.documentElement.style.removeProperty('--zenreader-accent');
+        return;
+      }
+
+      const cover = activeBook?.coverImage;
+      const res = await avgColorFromImage(cover);
+      if (cancelled) return;
+      if (res) {
+        setAccentVar(res.rgba);
+      } else {
+        try {
+          const computed = getComputedStyle(document.body).backgroundColor || THEME_COLORS[settings.theme].bg;
+          const m = computed.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+          if (m) {
+            const r = parseInt(m[1], 10), g = parseInt(m[2], 10), b = parseInt(m[3], 10);
+            setAccentVar(`rgba(${r}, ${g}, ${b}, 0.88)`);
+          } else {
+            const fallback = THEME_COLORS[settings.theme].bg || THEME_COLORS[ThemeType.LIGHT].uiBg;
+            setAccentVar(fallback);
+          }
+        } catch (e) {
+          const fallback = THEME_COLORS[settings.theme].bg || THEME_COLORS[ThemeType.LIGHT].uiBg;
+          setAccentVar(fallback);
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [activeBook?.coverImage, view, settings.theme]);
+
+  // Ensure the device status bar follows the system color scheme (light/dark)
+  useEffect(() => {
+    const applySystemBar = (isDark: boolean) => {
+      try {
+        const meta = document.querySelector('meta[name="theme-color"]') as HTMLMetaElement | null;
+        const apple = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]') as HTMLMetaElement | null;
+        const darkColor = THEME_COLORS[ThemeType.DARK]?.uiBg || '#242424';
+        const lightColor = THEME_COLORS[ThemeType.LIGHT]?.uiBg || '#f9fafb';
+        if (meta) meta.setAttribute('content', isDark ? darkColor : lightColor);
+        if (apple) apple.setAttribute('content', isDark ? 'black' : 'default');
+      } catch (e) {
+        // ignore
+      }
+    };
+
+    if (typeof window !== 'undefined' && 'matchMedia' in window) {
+      const mql = window.matchMedia('(prefers-color-scheme: dark)');
+      applySystemBar(mql.matches);
+      const handler = (e: MediaQueryListEvent) => applySystemBar(e.matches);
+      if (mql.addEventListener) mql.addEventListener('change', handler);
+      else (mql as any).addListener(handler);
+      return () => {
+        if (mql.removeEventListener) mql.removeEventListener('change', handler);
+        else (mql as any).removeListener(handler);
+      };
+    }
+  }, []);
 
   // --- CLOUD SYNC: Auto-push progress on changes (Debounced) ---
   useEffect(() => {
