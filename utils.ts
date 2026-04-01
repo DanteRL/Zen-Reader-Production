@@ -43,47 +43,68 @@ export const calculateProgress = (currentPage: number, totalPages: number): numb
  * Detects patterns like "第x章" to split content.
  */
 export const parseChapters = (text: string): Chapter[] => {
-  // Regex to match common Chinese chapter headers at start of line
-  // Matches: 第1章, 第一章, 第100节, Chapter 1, etc.
-  const chapterRegex = /(?:^|\n)\s*(#{1,3}\s+)?(第[0-9零一二三四五六七八九十百千]+[章回节卷]|Chapter\s+\d+|[A-Z][a-z]+(\s+[A-Z][a-z]+)*).*/g;
-  
-  const matches = [...text.matchAll(chapterRegex)];
-  
-  // If we find too few chapters (e.g., < 3), it might not be a novel, or formatting is weird.
-  // In that case, we fallback to splitting by length but treat them as "Pages".
-  if (matches.length < 2) {
-    const RAW_CHARS_PER_PAGE = 5000; // Larger chunks for "chapter" view
+  if (!text || text.trim().length === 0) return [];
+
+  // Normalize line endings to simplify index calculations
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = normalized.split('\n');
+
+  // Detect header lines by scanning each line (more robust for TXT)
+  const headerLines: { lineIndex: number; title: string; charIndex: number }[] = [];
+  let charIndex = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Candidate header patterns:
+    // - Chinese: 第1章 / 第一章 / 第十回 / 第三节 等
+    // - English: Chapter 1 / Chapter I (numeric or roman), case-insensitive
+    // - Markdown headings: # Heading
+    const chineseHeader = /^\s*第\s*[0-9零一二三四五六七八九十百千两〇○]+(?:章|回|节|卷|篇)\b[:：.\s\-–—]*/;
+    const englishHeaderNumeric = /^\s*(?:chapter|chap)\s*\d+\b[:：.\s\-–—]*/i;
+    const englishHeaderRoman = /^\s*(?:chapter|chap)\s*[ivxlcdm]+\b[:：.\s\-–—]*/i;
+    const markdownHeader = /^\s*#{1,6}\s+/;
+
+    if (trimmed.length > 0 && (chineseHeader.test(trimmed) || englishHeaderNumeric.test(trimmed) || englishHeaderRoman.test(trimmed) || markdownHeader.test(trimmed))) {
+      headerLines.push({ lineIndex: i, title: trimmed, charIndex });
+    }
+
+    // Advance charIndex: include '\n' for all but the last line
+    charIndex += line.length + (i < lines.length - 1 ? 1 : 0);
+  }
+
+  // If too few detected headers, fallback to pagination
+  if (headerLines.length < 2) {
+    const RAW_CHARS_PER_PAGE = 5000;
     const rawPages = paginateText(text, RAW_CHARS_PER_PAGE);
     return rawPages.map((content, index) => ({
-      title: `Page ${index + 1}`,
+      title: rawPages.length === 1 ? 'Content' : `Page ${index + 1}`,
       content
     }));
   }
 
   const chapters: Chapter[] = [];
-  
-  // Handle preamble (text before first chapter)
-  if (matches[0].index! > 0) {
+
+  // Preamble / text before first detected header
+  if (headerLines[0].charIndex > 0) {
     chapters.push({
       title: 'Preface / Start',
-      content: text.substring(0, matches[0].index!).trim()
+      content: normalized.substring(0, headerLines[0].charIndex).trim()
     });
   }
 
-  // Iterate through matches
-  for (let i = 0; i < matches.length; i++) {
-    const match = matches[i];
-    const startIndex = match.index!;
-    const endIndex = i < matches.length - 1 ? matches[i + 1].index! : text.length;
-    
-    const fullSection = text.substring(startIndex, endIndex);
-    // Clean up title: remove Markdown hashes if present
-    const title = match[0].replace(/^[#\s]+/, '').trim().split('\n')[0]; 
-    
-    // We keep full section so the reader sees the title in the text body too
+  // Build chapters using detected header start indices
+  for (let i = 0; i < headerLines.length; i++) {
+    const start = headerLines[i].charIndex;
+    const end = i < headerLines.length - 1 ? headerLines[i + 1].charIndex : normalized.length;
+    const section = normalized.substring(start, end).trim();
+
+    // Clean title: remove Markdown hashes and take the first line
+    const cleanedTitle = headerLines[i].title.replace(/^#{1,6}\s+/, '').trim().split('\n')[0];
+
     chapters.push({
-      title: title,
-      content: fullSection 
+      title: cleanedTitle || `Chapter ${i + 1}`,
+      content: section
     });
   }
 
