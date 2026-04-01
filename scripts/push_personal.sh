@@ -54,20 +54,22 @@ if [[ "$ORIGIN_URL" == https://* ]]; then
   git remote set-url origin "$REMOTE_SSH"
 fi
 
-# Find candidate private keys in ~/.ssh
+# Find candidate private keys in ~/.ssh (avoid bash-4+ only features for macOS)
 SSH_DIR="$HOME/.ssh"
 if [ ! -d "$SSH_DIR" ]; then
   echo "No ~/.ssh directory found. Cannot find SSH keys." >&2
   exit 4
 fi
 
-# list non-.pub files
-mapfile -t allfiles < <(ls -1A "$SSH_DIR" 2>/dev/null || true)
 private_files=()
-for f in "${allfiles[@]}"; do
-  case "$f" in
+for filepath in "$SSH_DIR"/*; do
+  if [ ! -f "$filepath" ]; then
+    continue
+  fi
+  fname=$(basename "$filepath")
+  case "$fname" in
     *.pub|known_hosts|config|authorized_keys) continue ;;
-    *) private_files+=("$f") ;;
+    *) private_files+=("$fname") ;;
   esac
 done
 
