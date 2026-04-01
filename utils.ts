@@ -49,6 +49,12 @@ export const parseChapters = (text: string): Chapter[] => {
   const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const lines = normalized.split('\n');
 
+  // Candidate header patterns (shared across scanning phases)
+  const chineseHeader = /^\s*第\s*[0-9零一二三四五六七八九十百千两〇○]+(?:章|回|节|卷|篇)\b[:：.\s\-–—]*/;
+  const englishHeaderNumeric = /^\s*(?:chapter|chap)\s*\d+\b[:：.\s\-–—]*/i;
+  const englishHeaderRoman = /^\s*(?:chapter|chap)\s*[ivxlcdm]+\b[:：.\s\-–—]*/i;
+  const markdownHeader = /^\s*#{1,6}\s+/;
+
   // Detect header lines by scanning each line (more robust for TXT)
   const headerLines: { lineIndex: number; title: string; charIndex: number }[] = [];
   let charIndex = 0;
@@ -56,14 +62,7 @@ export const parseChapters = (text: string): Chapter[] => {
     const line = lines[i];
     const trimmed = line.trim();
 
-    // Candidate header patterns:
-    // - Chinese: 第1章 / 第一章 / 第十回 / 第三节 等
-    // - English: Chapter 1 / Chapter I (numeric or roman), case-insensitive
-    // - Markdown headings: # Heading
-    const chineseHeader = /^\s*第\s*[0-9零一二三四五六七八九十百千两〇○]+(?:章|回|节|卷|篇)\b[:：.\s\-–—]*/;
-    const englishHeaderNumeric = /^\s*(?:chapter|chap)\s*\d+\b[:：.\s\-–—]*/i;
-    const englishHeaderRoman = /^\s*(?:chapter|chap)\s*[ivxlcdm]+\b[:：.\s\-–—]*/i;
-    const markdownHeader = /^\s*#{1,6}\s+/;
+    // Candidate header patterns are defined above and reused here.
 
     if (trimmed.length > 0 && (chineseHeader.test(trimmed) || englishHeaderNumeric.test(trimmed) || englishHeaderRoman.test(trimmed) || markdownHeader.test(trimmed))) {
       headerLines.push({ lineIndex: i, title: trimmed, charIndex });
@@ -127,7 +126,23 @@ export const parseChapters = (text: string): Chapter[] => {
         const cleanedTitle = detectedParaHeaders[i].title.split('\n')[0].trim();
         chapters.push({ title: cleanedTitle || `Section ${i + 1}`, content: section });
       }
-      return chapters;
+      // Post-process short chapters
+      const finalize = (chs: Chapter[]) => {
+        const MIN_CHARS = 120;
+        const out: Chapter[] = [];
+        for (let i = 0; i < chs.length; i++) {
+          const cur = chs[i];
+          if (cur.content.length < MIN_CHARS && out.length > 0) {
+            // Merge short chapter into previous one
+            out[out.length - 1].content = (out[out.length - 1].content + '\n\n' + cur.content).trim();
+          } else {
+            out.push({ title: cur.title, content: cur.content });
+          }
+        }
+        return out;
+      };
+
+      return finalize(chapters);
     }
 
     // Fallback: group paragraphs into pages of approx RAW_CHARS_PER_PAGE, but keep paragraph boundaries
@@ -172,7 +187,23 @@ export const parseChapters = (text: string): Chapter[] => {
       titles.push(t);
     }
 
-    return pages.map((content, index) => ({ title: titles[index], content }));
+    const pg = pages.map((content, index) => ({ title: titles[index], content }));
+    // merge very short pages into previous page to avoid spurious tiny chapters
+    const finalizePages = (chs: Chapter[]) => {
+      const MIN_CHARS = 120;
+      const out: Chapter[] = [];
+      for (let i = 0; i < chs.length; i++) {
+        const cur = chs[i];
+        if (cur.content.length < MIN_CHARS && out.length > 0) {
+          out[out.length - 1].content = (out[out.length - 1].content + '\n\n' + cur.content).trim();
+        } else {
+          out.push({ title: cur.title, content: cur.content });
+        }
+      }
+      return out;
+    };
+
+    return finalizePages(pg);
   }
 
   const chapters: Chapter[] = [];
@@ -200,7 +231,22 @@ export const parseChapters = (text: string): Chapter[] => {
     });
   }
 
-  return chapters;
+  // final merging pass for header-detected chapters (avoid tiny lonely chapters)
+  const finalize = (chs: Chapter[]) => {
+    const MIN_CHARS = 120;
+    const out: Chapter[] = [];
+    for (let i = 0; i < chs.length; i++) {
+      const cur = chs[i];
+      if (cur.content.length < MIN_CHARS && out.length > 0) {
+        out[out.length - 1].content = (out[out.length - 1].content + '\n\n' + cur.content).trim();
+      } else {
+        out.push({ title: cur.title, content: cur.content });
+      }
+    }
+    return out;
+  };
+
+  return finalize(chapters);
 };
 
 // Helper to dynamically load scripts if they are missing
