@@ -20,7 +20,7 @@ This document captures the domain model and key architectural **Deep Modules** i
 - **Interface**: Exposes a single entry point: `parseBookFile(file: File): Promise<BookData>`.
 - **Implementation**: Hides format-specific strategies:
   - `txtParser.ts`: UTF-8/GBK encoding fallback, intelligent regex chapter splitting (`第x章`, `Chapter X`), metadata extraction.
-  - `epubParser.ts`: Dynamic CDN loading of JSZip/ePub.js, DOM HTML parsing, cover extraction, data URL image converting.
+  - `epubParser.ts`: Standalone offline parsing using bundled JSZip, OPF container & manifest parsing, EPUB 2/3 TOC extraction, relative path resolution, and inline CSS & base64 image embedding.
   - `pdfParser.ts`: Dynamic CDN loading of PDF.js, worker setup, off-screen `<canvas>` cover generation, outline/TOC extraction.
 
 ### 3. `AIService` (`services/aiService.ts`)

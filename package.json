@@ -11,6 +11,7 @@
   "dependencies": {
     "@google/genai": "^1.30.0",
     "@supabase/supabase-js": "^2.99.1",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.554.0",
     "opencc-js": "^1.0.5",
     "react": "^19.2.0",
@@ -19,9 +20,9 @@
   "devDependencies": {
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.0",
     "chardet": "^0.7.0",
-    "iconv-lite": "^0.6.3"
+    "iconv-lite": "^0.6.3",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
   }
 }

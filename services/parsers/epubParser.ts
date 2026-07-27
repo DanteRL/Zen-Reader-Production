@@ -1,195 +1,381 @@
+import JSZip from 'jszip';
 import { Chapter, BookData } from '../../types';
 
-const loadScript = (src: string): Promise<void> => {
-  return new Promise((resolve, reject) => {
-    if (document.querySelector(`script[src="${src}"]`)) {
-      resolve();
-      return;
+/**
+ * No-op function maintained for backwards compatibility.
+ * EPUB parsing now uses local bundled JSZip, eliminating CDN dependencies.
+ */
+export const ensureEpubLibrariesLoaded = async (): Promise<void> => {
+  return Promise.resolve();
+};
+
+/**
+ * Resolves relative file paths within an EPUB zip archive.
+ * E.g., resolveZipPath('OEBPS/text/ch1.xhtml', '../images/fig1.jpg') -> 'OEBPS/images/fig1.jpg'
+ */
+export function resolveZipPath(basePath: string, relativePath: string): string {
+  if (
+    !relativePath ||
+    relativePath.startsWith('http://') ||
+    relativePath.startsWith('https://') ||
+    relativePath.startsWith('data:')
+  ) {
+    return relativePath;
+  }
+
+  // Strip query parameters and anchor hashes
+  const cleanRelative = relativePath.split('#')[0].split('?')[0];
+  if (!cleanRelative) return '';
+
+  if (cleanRelative.startsWith('/')) {
+    return cleanRelative.slice(1);
+  }
+
+  const stack = basePath && basePath.includes('/') ? basePath.split('/').slice(0, -1) : [];
+  const parts = cleanRelative.split('/');
+
+  for (const part of parts) {
+    if (part === '.' || part === '') continue;
+    if (part === '..') {
+      if (stack.length > 0) stack.pop();
+    } else {
+      stack.push(part);
     }
-    const script = document.createElement('script');
-    script.src = src;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error(`Failed to load script: ${src}`));
-    document.head.appendChild(script);
-  });
-};
-
-export const ensureEpubLibrariesLoaded = async () => {
-  if (!(window as any).JSZip) {
-    await loadScript('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js');
   }
-  if (!(window as any).ePub) {
-    await loadScript('https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js');
-    await new Promise(r => setTimeout(r, 100));
+
+  return stack.join('/');
+}
+
+/**
+ * Returns the MIME type based on file extension.
+ */
+function getMimeType(filePath: string): string {
+  const ext = filePath.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'png': return 'image/png';
+    case 'gif': return 'image/gif';
+    case 'webp': return 'image/webp';
+    case 'svg': return 'image/svg+xml';
+    case 'jpg':
+    case 'jpeg':
+    default:
+      return 'image/jpeg';
   }
-};
+}
 
-export const parseEpubFile = async (file: File): Promise<Partial<BookData>> => {
-  await ensureEpubLibrariesLoaded();
+/**
+ * Resolves asset URLs in CSS (e.g. url(../images/bg.png)) to base64 Data URLs.
+ */
+async function resolveCssUrls(cssText: string, cssZipPath: string, zip: JSZip): Promise<string> {
+  const urlRegex = /url\((['"]?)([^'"\)]+)\1\)/g;
+  let match: RegExpExecArray | null;
+  const replacements: { original: string; dataUrl: string }[] = [];
 
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = async (e) => {
+  while ((match = urlRegex.exec(cssText)) !== null) {
+    const rawUrl = match[2];
+    if (rawUrl.startsWith('data:') || rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
+      continue;
+    }
+
+    const imgZipPath = resolveZipPath(cssZipPath, rawUrl);
+    const imgZipFile = zip.file(imgZipPath);
+    if (imgZipFile) {
       try {
-        const arrayBuffer = e.target?.result;
-        if (!arrayBuffer) {
-          reject("Empty file");
-          return;
-        }
-
-        const ePubLib = (window as any).ePub;
-        if (!ePubLib) {
-          throw new Error("EPUB library failed to initialize.");
-        }
-
-        const book = ePubLib(arrayBuffer);
-        await book.ready;
-
-        const metadata = await book.loaded.metadata;
-        const author = metadata.creator || metadata.publisher || 'Unknown';
-        const title = metadata.title || file.name.replace(/\.[^/.]+$/, "");
-
-        const chapters: Chapter[] = [];
-        const spineItems = book.spine.items;
-
-        for (const item of spineItems) {
-          if (!item.href) continue;
-
-          const doc = await book.load(item.href);
-          let text = '';
-          let html = '';
-          if (typeof doc === 'string') {
-            const parser = new DOMParser();
-            const htmlDoc = parser.parseFromString(doc, 'text/html');
-            html = htmlDoc.body.innerHTML || '';
-            text = htmlDoc.body.textContent || '';
-          } else if (doc instanceof Document) {
-            html = doc.body.innerHTML || '';
-            text = doc.body.textContent || '';
-          } else if (doc && doc.textContent) {
-            text = doc.textContent;
-          }
-
-          text = (text || '').trim();
-
-          if (text.length > 50) {
-            let chapterTitle = "Chapter";
-            const navItem = book.navigation?.toc?.find((n: any) => n.href && item.href && n.href.includes(item.href));
-            if (navItem) {
-              chapterTitle = navItem.label.trim();
-            } else {
-              const firstLine = text.split('\n')[0].substring(0, 50);
-              if (firstLine.length > 0 && firstLine.length < 50) chapterTitle = firstLine;
-            }
-
-            if (html && html.length > 0) {
-              try {
-                const parser = new DOMParser();
-                const docHtml = parser.parseFromString(html, 'text/html');
-                const imgs = Array.from(docHtml.querySelectorAll('img')) as HTMLImageElement[];
-
-                await Promise.all(imgs.map(async (img) => {
-                  try {
-                    const src = img.getAttribute('src') || img.src;
-                    if (!src || src.startsWith('data:')) return;
-
-                    let fetched: Response | null = null;
-                    try {
-                      fetched = await fetch(src);
-                    } catch (e) {
-                      try {
-                        const base = item.href || '';
-                        const baseParts = base.split('/').slice(0, -1).join('/');
-                        const resolved = baseParts ? `${baseParts}/${src}` : src;
-                        fetched = await fetch(resolved);
-                      } catch (e2) {
-                        fetched = null;
-                      }
-                    }
-
-                    if (fetched && fetched.ok) {
-                      const blob = await fetched.blob();
-                      const dataUrl = await new Promise<string>((res) => {
-                        const r = new FileReader();
-                        r.onloadend = () => res(r.result as string);
-                        r.readAsDataURL(blob);
-                      });
-                      img.setAttribute('src', dataUrl);
-                      return;
-                    }
-
-                    if ((book as any).resources && typeof (book as any).resources.get === 'function') {
-                      const res = await (book as any).resources.get(src);
-                      if (res) {
-                        let blobFromRes: Blob | null = null;
-                        if (res instanceof Blob) blobFromRes = res;
-                        else if (res instanceof ArrayBuffer) blobFromRes = new Blob([res]);
-                        else if (res.buffer && res.buffer instanceof ArrayBuffer) blobFromRes = new Blob([res.buffer]);
-
-                        if (blobFromRes) {
-                          const dataUrl = await new Promise<string>((res) => {
-                            const r = new FileReader();
-                            r.onloadend = () => res(r.result as string);
-                            r.readAsDataURL(blobFromRes as Blob);
-                          });
-                          img.setAttribute('src', dataUrl);
-                        }
-                      }
-                    }
-                  } catch (imgErr) {
-                    console.warn('Image processing failed', imgErr);
-                  }
-                }));
-
-                html = docHtml.body.innerHTML || html;
-              } catch (procErr) {
-                console.warn('Failed to process chapter HTML images', procErr);
-              }
-            }
-
-            chapters.push({
-              title: chapterTitle,
-              content: text,
-              html: html || undefined,
-              href: item.href
-            });
-          }
-        }
-
-        let coverImage: string | undefined;
-        try {
-          const coverUrl = await book.coverUrl();
-          if (coverUrl) {
-            const response = await fetch(coverUrl);
-            const blob = await response.blob();
-            coverImage = await new Promise((res) => {
-              const r = new FileReader();
-              r.onloadend = () => res(r.result as string);
-              r.readAsDataURL(blob);
-            });
-          }
-        } catch (coverErr) {
-          console.warn("Could not extract cover image", coverErr);
-        }
-
-        if (chapters.length === 0) {
-          reject("No readable text content found in EPUB");
-          return;
-        }
-
-        resolve({
-          title,
-          author,
-          chapters,
-          coverImage,
-          format: 'epub',
+        const base64 = await imgZipFile.async('base64');
+        const mime = getMimeType(imgZipPath);
+        replacements.push({
+          original: match[0],
+          dataUrl: `url("data:${mime};base64,${base64}")`
         });
-      } catch (err) {
-        console.error("EPUB Parse Error", err);
-        reject(err);
+      } catch (e) {
+        console.warn(`Failed to convert CSS asset ${imgZipPath}`, e);
       }
+    }
+  }
+
+  let resolvedCss = cssText;
+  for (const rep of replacements) {
+    resolvedCss = resolvedCss.split(rep.original).join(rep.dataUrl);
+  }
+  return resolvedCss;
+}
+
+interface ManifestItem {
+  id: string;
+  href: string;
+  fullZipPath: string;
+  mediaType: string;
+  properties?: string;
+}
+
+/**
+ * Best Practice EPUB File Parser.
+ * Uses JSZip to extract OPF package, metadata, manifest, spine reading order,
+ * EPUB 2 NCX / EPUB 3 NAV Table of Contents, inlines CSS and images as Data URLs.
+ */
+export const parseEpubFile = async (file: File): Promise<Partial<BookData>> => {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const zip = await JSZip.loadAsync(arrayBuffer);
+
+    // 1. Locate OPF Rootfile from META-INF/container.xml
+    let opfPath = '';
+    const containerFile = zip.file('META-INF/container.xml');
+    if (containerFile) {
+      const containerXml = await containerFile.async('text');
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(containerXml, 'text/xml');
+      const rootfile = doc.querySelector('rootfile');
+      if (rootfile) {
+        opfPath = rootfile.getAttribute('full-path') || '';
+      }
+    }
+
+    // Fallback: search zip entries for any .opf file
+    if (!opfPath) {
+      const opfEntry = Object.keys(zip.files).find(name => name.endsWith('.opf'));
+      if (opfEntry) {
+        opfPath = opfEntry;
+      } else {
+        throw new Error('Invalid EPUB: META-INF/container.xml or OPF package document not found.');
+      }
+    }
+
+    const opfFile = zip.file(opfPath);
+    if (!opfFile) {
+      throw new Error(`OPF document missing at path: ${opfPath}`);
+    }
+
+    // 2. Parse OPF XML
+    const opfXml = await opfFile.async('text');
+    const parser = new DOMParser();
+    const opfDoc = parser.parseFromString(opfXml, 'text/xml');
+
+    // 3. Extract Metadata
+    const titleEl = opfDoc.querySelector('metadata > title, metadata > dc\\:title');
+    const title = titleEl?.textContent?.trim() || file.name.replace(/\.[^/.]+$/, "");
+
+    const creatorEl = opfDoc.querySelector('metadata > creator, metadata > dc\\:creator');
+    const publisherEl = opfDoc.querySelector('metadata > publisher, metadata > dc\\:publisher');
+    const author = creatorEl?.textContent?.trim() || publisherEl?.textContent?.trim() || 'Unknown Author';
+
+    // 4. Build Manifest Map
+    const manifestMap = new Map<string, ManifestItem>();
+    const manifestElements = Array.from(opfDoc.querySelectorAll('manifest > item'));
+
+    for (const el of manifestElements) {
+      const id = el.getAttribute('id');
+      const href = el.getAttribute('href');
+      const mediaType = el.getAttribute('media-type') || '';
+      const properties = el.getAttribute('properties') || '';
+
+      if (id && href) {
+        const fullZipPath = resolveZipPath(opfPath, href);
+        manifestMap.set(id, { id, href, fullZipPath, mediaType, properties });
+      }
+    }
+
+    // 5. Extract Cover Image
+    let coverImage: string | undefined = undefined;
+    try {
+      let coverZipPath: string | null = null;
+
+      // Check EPUB 3 cover-image property
+      for (const item of manifestMap.values()) {
+        if (item.properties && item.properties.includes('cover-image')) {
+          coverZipPath = item.fullZipPath;
+          break;
+        }
+      }
+
+      // Check EPUB 2 meta cover attribute
+      if (!coverZipPath) {
+        const metaCover = opfDoc.querySelector('metadata > meta[name="cover"]');
+        const coverId = metaCover?.getAttribute('content');
+        if (coverId && manifestMap.has(coverId)) {
+          coverZipPath = manifestMap.get(coverId)!.fullZipPath;
+        }
+      }
+
+      // Fallback heuristic: search manifest items matching image/* with "cover" in id/href
+      if (!coverZipPath) {
+        for (const item of manifestMap.values()) {
+          if (
+            item.mediaType.startsWith('image/') &&
+            (item.id.toLowerCase().includes('cover') || item.href.toLowerCase().includes('cover'))
+          ) {
+            coverZipPath = item.fullZipPath;
+            break;
+          }
+        }
+      }
+
+      if (coverZipPath && zip.file(coverZipPath)) {
+        const coverFile = zip.file(coverZipPath)!;
+        const base64 = await coverFile.async('base64');
+        const mime = getMimeType(coverZipPath);
+        coverImage = `data:${mime};base64,${base64}`;
+      }
+    } catch (coverErr) {
+      console.warn("Cover image extraction failed:", coverErr);
+    }
+
+    // 6. Build Table of Contents (TOC) Map: fullZipPath -> title
+    const tocTitleMap = new Map<string, string>();
+
+    // Try EPUB 3 NAV document
+    const navItem = Array.from(manifestMap.values()).find(i => i.properties && i.properties.includes('nav'));
+    if (navItem && zip.file(navItem.fullZipPath)) {
+      const navContent = await zip.file(navItem.fullZipPath)!.async('text');
+      const navDoc = parser.parseFromString(navContent, 'text/html');
+      const tocNav = navDoc.querySelector('nav[epub\\:type="toc"], nav#toc, nav');
+      if (tocNav) {
+        const links = Array.from(tocNav.querySelectorAll('a'));
+        for (const link of links) {
+          const href = link.getAttribute('href');
+          const label = link.textContent?.trim();
+          if (href && label) {
+            const fullZipPath = resolveZipPath(navItem.fullZipPath, href);
+            if (!tocTitleMap.has(fullZipPath)) {
+              tocTitleMap.set(fullZipPath, label);
+            }
+          }
+        }
+      }
+    }
+
+    // Try EPUB 2 NCX document if NAV map is empty
+    if (tocTitleMap.size === 0) {
+      const ncxItem = Array.from(manifestMap.values()).find(
+        i => i.mediaType.includes('ncx') || i.id.toLowerCase().includes('ncx')
+      );
+      if (ncxItem && zip.file(ncxItem.fullZipPath)) {
+        const ncxContent = await zip.file(ncxItem.fullZipPath)!.async('text');
+        const ncxDoc = parser.parseFromString(ncxContent, 'text/xml');
+        const navPoints = Array.from(ncxDoc.querySelectorAll('navPoint'));
+        for (const np of navPoints) {
+          const labelEl = np.querySelector('navLabel > text');
+          const contentEl = np.querySelector('content');
+          const label = labelEl?.textContent?.trim();
+          const href = contentEl?.getAttribute('src');
+          if (href && label) {
+            const fullZipPath = resolveZipPath(ncxItem.fullZipPath, href);
+            if (!tocTitleMap.has(fullZipPath)) {
+              tocTitleMap.set(fullZipPath, label);
+            }
+          }
+        }
+      }
+    }
+
+    // 7. Parse Spine Items in Reading Order
+    const itemrefs = Array.from(opfDoc.querySelectorAll('spine > itemref'));
+    const chapters: Chapter[] = [];
+
+    for (let i = 0; i < itemrefs.length; i++) {
+      const idref = itemrefs[i].getAttribute('idref');
+      const linear = itemrefs[i].getAttribute('linear');
+      if (linear === 'no') continue;
+
+      if (!idref || !manifestMap.has(idref)) continue;
+      const manifestItem = manifestMap.get(idref)!;
+      const zipFile = zip.file(manifestItem.fullZipPath);
+      if (!zipFile) continue;
+
+      const rawHtml = await zipFile.async('text');
+      const doc = parser.parseFromString(rawHtml, 'text/html');
+
+      // A. Inline CSS Stylesheets
+      const linkStyles = Array.from(doc.querySelectorAll('link[rel="stylesheet"]'));
+      for (const link of linkStyles) {
+        const href = link.getAttribute('href');
+        if (href) {
+          const cssZipPath = resolveZipPath(manifestItem.fullZipPath, href);
+          const cssFile = zip.file(cssZipPath);
+          if (cssFile) {
+            try {
+              let cssText = await cssFile.async('text');
+              cssText = await resolveCssUrls(cssText, cssZipPath, zip);
+              const styleEl = doc.createElement('style');
+              styleEl.textContent = cssText;
+              link.replaceWith(styleEl);
+            } catch (cssErr) {
+              console.warn(`Failed to process stylesheet ${cssZipPath}`, cssErr);
+            }
+          }
+        }
+      }
+
+      // B. Resolve & Inline Images (<img src="..."> and <image xlink:href="...">)
+      const images = Array.from(doc.querySelectorAll('img, image'));
+      for (const img of images) {
+        const srcAttr = img.getAttribute('src') || img.getAttribute('xlink:href');
+        if (!srcAttr || srcAttr.startsWith('data:')) continue;
+
+        const imgZipPath = resolveZipPath(manifestItem.fullZipPath, srcAttr);
+        const imgZipFile = zip.file(imgZipPath);
+        if (imgZipFile) {
+          try {
+            const base64 = await imgZipFile.async('base64');
+            const mime = getMimeType(imgZipPath);
+            const dataUrl = `data:${mime};base64,${base64}`;
+            if (img.hasAttribute('src')) img.setAttribute('src', dataUrl);
+            if (img.hasAttribute('xlink:href')) img.setAttribute('xlink:href', dataUrl);
+          } catch (imgErr) {
+            console.warn(`Failed to convert image ${imgZipPath}`, imgErr);
+          }
+        }
+      }
+
+      // C. Extract Chapter Title
+      let chapterTitle = tocTitleMap.get(manifestItem.fullZipPath);
+      if (!chapterTitle) {
+        const heading = doc.querySelector('h1, h2, h3, header');
+        if (heading && heading.textContent?.trim()) {
+          chapterTitle = heading.textContent.trim();
+        } else {
+          const docTitle = doc.querySelector('title');
+          if (docTitle && docTitle.textContent?.trim() && docTitle.textContent.trim() !== 'Untitled') {
+            chapterTitle = docTitle.textContent.trim();
+          }
+        }
+      }
+
+      // D. Extract Text and HTML Content
+      const body = doc.body;
+      if (!body) continue;
+
+      const textContent = (body.textContent || '').trim();
+      const hasImages = doc.querySelectorAll('img, svg').length > 0;
+
+      // Skip completely empty pages without text or images
+      if (textContent.length < 5 && !hasImages) {
+        continue;
+      }
+
+      const htmlContent = body.innerHTML || '';
+
+      chapters.push({
+        title: chapterTitle || `Chapter ${chapters.length + 1}`,
+        content: textContent,
+        html: htmlContent,
+        href: manifestItem.href
+      });
+    }
+
+    if (chapters.length === 0) {
+      throw new Error("No readable text or content chapters found in EPUB file.");
+    }
+
+    return {
+      title,
+      author,
+      chapters,
+      coverImage,
+      format: 'epub',
     };
-    reader.onerror = () => reject("Error reading file");
-    reader.readAsArrayBuffer(file);
-  });
+  } catch (err) {
+    console.error("EPUB Parse Error:", err);
+    throw err;
+  }
 };
