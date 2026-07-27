@@ -11,7 +11,6 @@ import { ThemeService } from './services/themeService';
 import { Locale } from './locales';
 import { isSupabaseConfigured, onAuthStateChange, initAuth, type Session, type User } from './supabase';
 import { pushProgress, pullProgress, type CloudProgress } from './cloudSync';
-import { LoginModal } from './components/LoginModal';
 import { LinkProgressModal } from './components/LinkProgressModal';
 
 const App: React.FC = () => {
@@ -25,7 +24,6 @@ const App: React.FC = () => {
   const [cloudUser, setCloudUser] = useState<User | null>(null);
   const [isSyncConnected, setIsSyncConnected] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
-  const [showLoginModal, setShowLoginModal] = useState(false);
   const [showLinkModal, setShowLinkModal] = useState<{ bookId: string; bookHash: string; bookTitle: string } | null>(null);
   const [cloudProgressList, setCloudProgressList] = useState<CloudProgress[]>([]);
 
@@ -336,10 +334,7 @@ const App: React.FC = () => {
   };
 
   const handleManualSync = async () => {
-    if (!cloudUser) {
-      setShowLoginModal(true);
-      return;
-    }
+    if (!cloudUser) return;
 
     setSyncStatus('syncing');
     try {
@@ -414,8 +409,6 @@ const App: React.FC = () => {
           onConnectSync={() => {
             if (isSyncConnected) {
               handleManualSync();
-            } else {
-              setShowLoginModal(true);
             }
           }}
           onLinkClick={(book) => {
@@ -455,11 +448,6 @@ const App: React.FC = () => {
         onRestoreBackup={handleRestoreBackup}
       />
 
-      <LoginModal
-        isOpen={showLoginModal}
-        onClose={() => setShowLoginModal(false)}
-        language={currentLocale}
-      />
 
       {showLinkModal && (
         <LinkProgressModal

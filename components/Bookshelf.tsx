@@ -14,7 +14,6 @@ interface BookshelfProps {
   onExportBackup: () => void;
   onRestoreBackup: (file: File) => void;
   onDeleteBooks: (ids: string[]) => void;
-  onLogin: () => void;
   onLogout: () => void;
   onManualSync: () => void;
   onLinkProgress: (bookId: string) => void;
@@ -34,7 +33,6 @@ export const Bookshelf: React.FC<BookshelfProps> = ({
   onExportBackup,
   onRestoreBackup,
   onDeleteBooks,
-  onLogin,
   onLogout,
   onManualSync,
   onLinkProgress,
@@ -388,7 +386,7 @@ export const Bookshelf: React.FC<BookshelfProps> = ({
 
                       {/* Menu Actions */}
                       <div className="p-1.5 space-y-0.5">
-                          {cloudUser ? (
+                          {cloudUser && (
                              <>
                               <button
                                 onClick={() => { setActiveMenu(null); onManualSync(); }}
@@ -408,14 +406,6 @@ export const Bookshelf: React.FC<BookshelfProps> = ({
                                 <span>{t.logout}</span>
                               </button>
                              </>
-                          ) : (
-                             <button
-                               onClick={() => { setActiveMenu(null); onLogin(); }}
-                               className="w-full text-left px-3 py-2 text-[13px] text-blue-600 hover:bg-blue-50 rounded-lg font-medium flex items-center gap-3 transition-colors"
-                             >
-                               <LogIn className="w-4 h-4" />
-                               <span>{t.login_to_sync}</span>
-                             </button>
                           )}
                       </div>
                   </div>
