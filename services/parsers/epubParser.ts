@@ -124,6 +124,70 @@ interface ManifestItem {
 }
 
 /**
+ * Robust, XML-namespace agnostic parser for OPF documents.
+ * Extracts title, author, cover, manifest items, and reading order spine itemrefs.
+ */
+function parseOpfDocument(opfXml: string, opfPath: string) {
+  // Title
+  const titleMatch = opfXml.match(/<dc:title[^>]*>([\s\S]*?)<\/dc:title>/i) || opfXml.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '').trim() : '';
+
+  // Creator / Author
+  const creatorMatch = opfXml.match(/<dc:creator[^>]*>([\s\S]*?)<\/dc:creator>/i) || opfXml.match(/<creator[^>]*>([\s\S]*?)<\/creator>/i);
+  const publisherMatch = opfXml.match(/<dc:publisher[^>]*>([\s\S]*?)<\/dc:publisher>/i) || opfXml.match(/<publisher[^>]*>([\s\S]*?)<\/publisher>/i);
+  const author = creatorMatch
+    ? creatorMatch[1].replace(/<[^>]+>/g, '').trim()
+    : publisherMatch
+    ? publisherMatch[1].replace(/<[^>]+>/g, '').trim()
+    : 'Unknown Author';
+
+  // Manifest items
+  const manifestMap = new Map<string, ManifestItem>();
+  const itemTagRegex = /<item\s+[^>]*\/?>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = itemTagRegex.exec(opfXml)) !== null) {
+    const itemTag = match[0];
+    const idMatch = itemTag.match(/\bid=["']([^"']+)["']/i);
+    const hrefMatch = itemTag.match(/\bhref=["']([^"']+)["']/i);
+    const mediaTypeMatch = itemTag.match(/\bmedia-type=["']([^"']+)["']/i);
+    const propertiesMatch = itemTag.match(/\bproperties=["']([^"']+)["']/i);
+
+    if (idMatch && hrefMatch) {
+      const id = idMatch[1];
+      const href = hrefMatch[1];
+      const mediaType = mediaTypeMatch ? mediaTypeMatch[1] : '';
+      const properties = propertiesMatch ? propertiesMatch[1] : '';
+      const fullZipPath = resolveZipPath(opfPath, href);
+      manifestMap.set(id, { id, href, fullZipPath, mediaType, properties });
+    }
+  }
+
+  // Spine itemrefs
+  const itemrefRegex = /<itemref\s+[^>]*\/?>/gi;
+  const spineIds: string[] = [];
+  while ((match = itemrefRegex.exec(opfXml)) !== null) {
+    const tag = match[0];
+    const idrefMatch = tag.match(/\bidref=["']([^"']+)["']/i);
+    const linearMatch = tag.match(/\blinear=["']([^"']+)["']/i);
+    if (linearMatch && linearMatch[1].toLowerCase() === 'no') continue;
+    if (idrefMatch) {
+      spineIds.push(idrefMatch[1]);
+    }
+  }
+
+  // Cover image ID
+  let coverId: string | null = null;
+  const metaCoverMatch = opfXml.match(/<meta\s+[^>]*name=["']cover["'][^>]*content=["']([^"']+)["']/i) ||
+                          opfXml.match(/<meta\s+[^>]*content=["']([^"']+)["'][^>]*name=["']cover["']/i);
+  if (metaCoverMatch) {
+    coverId = metaCoverMatch[1];
+  }
+
+  return { title, author, manifestMap, spineIds, coverId };
+}
+
+/**
  * Best Practice EPUB File Parser.
  * Uses JSZip to extract OPF package, metadata, manifest, spine reading order,
  * EPUB 2 NCX / EPUB 3 NAV Table of Contents, inlines CSS and images as Data URLs.
@@ -138,12 +202,8 @@ export const parseEpubFile = async (file: File): Promise<Partial<BookData>> => {
     const containerFile = getZipFile(zip, 'META-INF/container.xml');
     if (containerFile) {
       const containerXml = await containerFile.async('text');
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(containerXml, 'text/xml');
-      const rootfile = doc.querySelector('rootfile');
-      if (rootfile) {
-        opfPath = rootfile.getAttribute('full-path') || '';
-      }
+      const m = containerXml.match(/full-path=["']([^"']+)["']/i);
+      if (m) opfPath = m[1];
     }
 
     // Fallback: search zip entries for any .opf file
@@ -161,36 +221,12 @@ export const parseEpubFile = async (file: File): Promise<Partial<BookData>> => {
       throw new Error(`OPF document missing at path: ${opfPath}`);
     }
 
-    // 2. Parse OPF XML
+    // 2. Parse OPF XML via robust namespace-agnostic parser
     const opfXml = await opfFile.async('text');
-    const parser = new DOMParser();
-    const opfDoc = parser.parseFromString(opfXml, 'text/xml');
+    const { title: rawTitle, author, manifestMap, spineIds, coverId } = parseOpfDocument(opfXml, opfPath);
+    const title = rawTitle || file.name.replace(/\.[^/.]+$/, "");
 
-    // 3. Extract Metadata
-    const titleEl = opfDoc.querySelector('metadata > title, metadata > dc\\:title');
-    const title = titleEl?.textContent?.trim() || file.name.replace(/\.[^/.]+$/, "");
-
-    const creatorEl = opfDoc.querySelector('metadata > creator, metadata > dc\\:creator');
-    const publisherEl = opfDoc.querySelector('metadata > publisher, metadata > dc\\:publisher');
-    const author = creatorEl?.textContent?.trim() || publisherEl?.textContent?.trim() || 'Unknown Author';
-
-    // 4. Build Manifest Map
-    const manifestMap = new Map<string, ManifestItem>();
-    const manifestElements = Array.from(opfDoc.querySelectorAll('manifest > item'));
-
-    for (const el of manifestElements) {
-      const id = el.getAttribute('id');
-      const href = el.getAttribute('href');
-      const mediaType = el.getAttribute('media-type') || '';
-      const properties = el.getAttribute('properties') || '';
-
-      if (id && href) {
-        const fullZipPath = resolveZipPath(opfPath, href);
-        manifestMap.set(id, { id, href, fullZipPath, mediaType, properties });
-      }
-    }
-
-    // 5. Extract Cover Image
+    // 3. Extract Cover Image
     let coverImage: string | undefined = undefined;
     try {
       let coverZipPath: string | null = null;
@@ -204,12 +240,8 @@ export const parseEpubFile = async (file: File): Promise<Partial<BookData>> => {
       }
 
       // Check EPUB 2 meta cover attribute
-      if (!coverZipPath) {
-        const metaCover = opfDoc.querySelector('metadata > meta[name="cover"]');
-        const coverId = metaCover?.getAttribute('content');
-        if (coverId && manifestMap.has(coverId)) {
-          coverZipPath = manifestMap.get(coverId)!.fullZipPath;
-        }
+      if (!coverZipPath && coverId && manifestMap.has(coverId)) {
+        coverZipPath = manifestMap.get(coverId)!.fullZipPath;
       }
 
       // Fallback heuristic: search manifest items matching image/* with "cover" in id/href
@@ -237,8 +269,9 @@ export const parseEpubFile = async (file: File): Promise<Partial<BookData>> => {
       console.warn("Cover image extraction failed:", coverErr);
     }
 
-    // 6. Build Table of Contents (TOC) Map: fullZipPath -> title
+    // 4. Build Table of Contents (TOC) Map: fullZipPath -> title
     const tocTitleMap = new Map<string, string>();
+    const parser = new DOMParser();
 
     // Try EPUB 3 NAV document
     const navItem = Array.from(manifestMap.values()).find(i => i.properties && i.properties.includes('nav'));
@@ -273,10 +306,10 @@ export const parseEpubFile = async (file: File): Promise<Partial<BookData>> => {
         const ncxFile = getZipFile(zip, ncxItem.fullZipPath);
         if (ncxFile) {
           const ncxContent = await ncxFile.async('text');
-          const ncxDoc = parser.parseFromString(ncxContent, 'text/xml');
-          const navPoints = Array.from(ncxDoc.querySelectorAll('navPoint'));
+          const ncxDoc = parser.parseFromString(ncxContent, 'text/html');
+          const navPoints = Array.from(ncxDoc.querySelectorAll('navpoint'));
           for (const np of navPoints) {
-            const labelEl = np.querySelector('navLabel > text');
+            const labelEl = np.querySelector('navlabel text') || np.querySelector('text');
             const contentEl = np.querySelector('content');
             const label = labelEl?.textContent?.trim();
             const href = contentEl?.getAttribute('src');
@@ -291,16 +324,13 @@ export const parseEpubFile = async (file: File): Promise<Partial<BookData>> => {
       }
     }
 
-    // 7. Parse Spine Items in Reading Order
-    const itemrefs = Array.from(opfDoc.querySelectorAll('spine > itemref'));
+    // 5. Parse Spine Items in Reading Order
     const chapters: Chapter[] = [];
 
-    for (let i = 0; i < itemrefs.length; i++) {
-      const idref = itemrefs[i].getAttribute('idref');
-      const linear = itemrefs[i].getAttribute('linear');
-      if (linear === 'no') continue;
+    for (let i = 0; i < spineIds.length; i++) {
+      const idref = spineIds[i];
+      if (!manifestMap.has(idref)) continue;
 
-      if (!idref || !manifestMap.has(idref)) continue;
       const manifestItem = manifestMap.get(idref)!;
       const zipFile = getZipFile(zip, manifestItem.fullZipPath);
       if (!zipFile) continue;
