@@ -320,16 +320,15 @@ const App: React.FC = () => {
     await BookRepository.updateProgress(updatedBook.id, newPageIndex);
   };
 
-  const handleDeleteBook = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (confirm('Are you sure you want to remove this book from your shelf?')) {
+  const handleDeleteBooks = async (ids: string[]) => {
+    for (const id of ids) {
       await BookRepository.deleteBook(id);
-      const updated = await BookRepository.getAllBooks();
-      setBooks(updated);
-      if (activeBook?.id === id) {
-        setActiveBook(null);
-        setView('shelf');
-      }
+    }
+    const updated = await BookRepository.getAllBooks();
+    setBooks(updated);
+    if (activeBook && ids.includes(activeBook.id)) {
+      setActiveBook(null);
+      setView('shelf');
     }
   };
 
@@ -398,7 +397,7 @@ const App: React.FC = () => {
           onOpenBook={handleOpenBook}
           onImportBook={handleImportBook}
           onImportFolder={handleImportFolder}
-          onDeleteBook={handleDeleteBook}
+          onDeleteBooks={handleDeleteBooks}
           onOpenSettings={() => setIsSettingsOpen(true)}
           isLoading={isLoading}
           settings={settings}

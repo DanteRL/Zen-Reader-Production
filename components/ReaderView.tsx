@@ -943,14 +943,14 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     return index >= start && index <= end;
   };
 
-  // Simple HTML sanitizer: remove <script> and on* attributes
+  // HTML sanitizer: remove <script>, <iframe>, event attributes, javascript: hrefs
   const sanitizeHtml = (raw: string) => {
     if (!raw) return '';
     try {
       const parser = new DOMParser();
       const doc = parser.parseFromString(raw, 'text/html');
-      // Remove script and style tags
-      doc.querySelectorAll('script, style').forEach(n => n.remove());
+      // Remove dangerous script/iframe tags, but PRESERVE <style> tags for EPUB formatting
+      doc.querySelectorAll('script, iframe, object, embed').forEach(n => n.remove());
       // Remove event handler attributes and javascript: hrefs
       const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_ELEMENT, null);
       const toProcess: Element[] = [];
@@ -960,7 +960,6 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         node = walker.nextNode();
       }
       toProcess.forEach(el => {
-        // Remove attributes starting with on (onclick, onload...)
         Array.from(el.attributes).forEach(attr => {
           if (/^on/i.test(attr.name)) el.removeAttribute(attr.name);
           if (attr.name === 'href' && attr.value.trim().toLowerCase().startsWith('javascript:')) el.removeAttribute('href');
@@ -1280,7 +1279,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               {convertedHtml ? (
                 // Render preprocessed chapter HTML
                 <div
-                  className="prose max-w-none"
+                  className="prose max-w-none dark:prose-invert [&_img]:max-w-full [&_img]:h-auto [&_img]:mx-auto [&_img]:my-4 [&_p]:my-3 [&_p]:leading-relaxed"
                   ref={contentRef}
                   onClick={(e) => {
                     const target = e.target as HTMLElement;
