@@ -502,10 +502,11 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   const accentBg = `var(--zenreader-accent, ${settings.theme === 'dark' ? 'rgba(36,36,36,0.85)' : settings.theme === 'sepia' ? 'rgba(242,240,233,0.85)' : 'rgba(255,255,255,0.9)'})`;
   
   const isPdf = !!book.pdfArrayBuffer;
-  const totalUnits = isPdf ? (book.pageCount || 1) : book.chapters.length;
-  const progress = calculateProgress(book.currentPageIndex, totalUnits);
+  const totalUnits = isPdf ? (book.pageCount || 1) : (book.chapters?.length || 1);
+  const safePageIndex = Math.max(0, Math.min(book.currentPageIndex || 0, Math.max(0, (book.chapters?.length || 1) - 1)));
+  const progress = calculateProgress(safePageIndex, totalUnits);
   
-  const currentChapter = isPdf ? null : book.chapters[book.currentPageIndex];
+  const currentChapter = isPdf ? null : (book.chapters && book.chapters.length > 0 ? book.chapters[safePageIndex] : null);
 
   // Converted content / HTML for text chapters (OpenCC conversion etc.)
   const [convertedContent, setConvertedContent] = useState<string>('');
@@ -686,20 +687,30 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       return;
     }
 
+    const rawContent = currentChapter.content || '';
+    const rawHtml = currentChapter.html || '';
+
     if (settings.textConversion === 'none') {
-      setConvertedContent(currentChapter.content);
-      setConvertedHtml(currentChapter.html || '');
+      setConvertedContent(rawContent);
+      setConvertedHtml(rawHtml);
       return;
     }
 
     try {
       const mode = settings.textConversion === 'cn2tw' ? 's2t' : settings.textConversion === 'tw2cn' ? 't2s' : 'original';
-      const converted = TextConverter.convert(currentChapter.content, mode);
-      setConvertedContent(converted);
-      setConvertedHtml('');
+      const convertedText = TextConverter.convert(rawContent, mode);
+      setConvertedContent(convertedText);
+
+      if (rawHtml) {
+        const convertedHtmlResult = TextConverter.convert(rawHtml, mode);
+        setConvertedHtml(convertedHtmlResult);
+      } else {
+        setConvertedHtml('');
+      }
     } catch (e) {
       console.error("Text conversion error:", e);
-      setConvertedContent(currentChapter.content);
+      setConvertedContent(rawContent);
+      setConvertedHtml(rawHtml);
     }
   }, [currentChapter, settings.textConversion, isPdf]);
 
@@ -1290,7 +1301,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                   }}
                   dangerouslySetInnerHTML={{ __html: sanitizeHtml(convertedHtml) }}
                 />
-              ) : (
+              ) : paragraphs.length > 0 ? (
                 paragraphs.map((text, i) => (
                   <Paragraph 
                     key={i}
@@ -1300,6 +1311,11 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                     settings={settings}
                   />
                 ))
+              ) : (
+                <div className="flex flex-col items-center justify-center py-20 text-center opacity-60">
+                  <AlertCircle className="w-10 h-10 mb-3 text-amber-500 opacity-80" />
+                  <p className="text-sm font-medium">No readable text content in this section</p>
+                </div>
               )}
 
               {/* Image preview modal */}
