@@ -10,6 +10,21 @@ export const ensureEpubLibrariesLoaded = async (): Promise<void> => {
 };
 
 /**
+ * Safely fetches a file from JSZip with case-insensitive fallback.
+ */
+function getZipFile(zip: JSZip, zipPath: string): JSZip.JSZipObject | null {
+  let file = zip.file(zipPath);
+  if (!file) {
+    const lowerPath = zipPath.toLowerCase();
+    const entryName = Object.keys(zip.files).find(k => k.toLowerCase() === lowerPath);
+    if (entryName) {
+      file = zip.file(entryName);
+    }
+  }
+  return file;
+}
+
+/**
  * Resolves relative file paths within an EPUB zip archive.
  * E.g., resolveZipPath('OEBPS/text/ch1.xhtml', '../images/fig1.jpg') -> 'OEBPS/images/fig1.jpg'
  */
@@ -78,7 +93,7 @@ async function resolveCssUrls(cssText: string, cssZipPath: string, zip: JSZip): 
     }
 
     const imgZipPath = resolveZipPath(cssZipPath, rawUrl);
-    const imgZipFile = zip.file(imgZipPath);
+    const imgZipFile = getZipFile(zip, imgZipPath);
     if (imgZipFile) {
       try {
         const base64 = await imgZipFile.async('base64');
@@ -120,7 +135,7 @@ export const parseEpubFile = async (file: File): Promise<Partial<BookData>> => {
 
     // 1. Locate OPF Rootfile from META-INF/container.xml
     let opfPath = '';
-    const containerFile = zip.file('META-INF/container.xml');
+    const containerFile = getZipFile(zip, 'META-INF/container.xml');
     if (containerFile) {
       const containerXml = await containerFile.async('text');
       const parser = new DOMParser();
@@ -133,7 +148,7 @@ export const parseEpubFile = async (file: File): Promise<Partial<BookData>> => {
 
     // Fallback: search zip entries for any .opf file
     if (!opfPath) {
-      const opfEntry = Object.keys(zip.files).find(name => name.endsWith('.opf'));
+      const opfEntry = Object.keys(zip.files).find(name => name.toLowerCase().endsWith('.opf'));
       if (opfEntry) {
         opfPath = opfEntry;
       } else {
@@ -141,7 +156,7 @@ export const parseEpubFile = async (file: File): Promise<Partial<BookData>> => {
       }
     }
 
-    const opfFile = zip.file(opfPath);
+    const opfFile = getZipFile(zip, opfPath);
     if (!opfFile) {
       throw new Error(`OPF document missing at path: ${opfPath}`);
     }
@@ -210,11 +225,13 @@ export const parseEpubFile = async (file: File): Promise<Partial<BookData>> => {
         }
       }
 
-      if (coverZipPath && zip.file(coverZipPath)) {
-        const coverFile = zip.file(coverZipPath)!;
-        const base64 = await coverFile.async('base64');
-        const mime = getMimeType(coverZipPath);
-        coverImage = `data:${mime};base64,${base64}`;
+      if (coverZipPath) {
+        const coverFile = getZipFile(zip, coverZipPath);
+        if (coverFile) {
+          const base64 = await coverFile.async('base64');
+          const mime = getMimeType(coverZipPath);
+          coverImage = `data:${mime};base64,${base64}`;
+        }
       }
     } catch (coverErr) {
       console.warn("Cover image extraction failed:", coverErr);
@@ -225,19 +242,22 @@ export const parseEpubFile = async (file: File): Promise<Partial<BookData>> => {
 
     // Try EPUB 3 NAV document
     const navItem = Array.from(manifestMap.values()).find(i => i.properties && i.properties.includes('nav'));
-    if (navItem && zip.file(navItem.fullZipPath)) {
-      const navContent = await zip.file(navItem.fullZipPath)!.async('text');
-      const navDoc = parser.parseFromString(navContent, 'text/html');
-      const tocNav = navDoc.querySelector('nav[epub\\:type="toc"], nav#toc, nav');
-      if (tocNav) {
-        const links = Array.from(tocNav.querySelectorAll('a'));
-        for (const link of links) {
-          const href = link.getAttribute('href');
-          const label = link.textContent?.trim();
-          if (href && label) {
-            const fullZipPath = resolveZipPath(navItem.fullZipPath, href);
-            if (!tocTitleMap.has(fullZipPath)) {
-              tocTitleMap.set(fullZipPath, label);
+    if (navItem) {
+      const navFile = getZipFile(zip, navItem.fullZipPath);
+      if (navFile) {
+        const navContent = await navFile.async('text');
+        const navDoc = parser.parseFromString(navContent, 'text/html');
+        const tocNav = navDoc.querySelector('nav[epub\\:type="toc"], nav#toc, nav');
+        if (tocNav) {
+          const links = Array.from(tocNav.querySelectorAll('a'));
+          for (const link of links) {
+            const href = link.getAttribute('href');
+            const label = link.textContent?.trim();
+            if (href && label) {
+              const fullZipPath = resolveZipPath(navItem.fullZipPath, href);
+              if (!tocTitleMap.has(fullZipPath)) {
+                tocTitleMap.set(fullZipPath, label);
+              }
             }
           }
         }
@@ -249,19 +269,22 @@ export const parseEpubFile = async (file: File): Promise<Partial<BookData>> => {
       const ncxItem = Array.from(manifestMap.values()).find(
         i => i.mediaType.includes('ncx') || i.id.toLowerCase().includes('ncx')
       );
-      if (ncxItem && zip.file(ncxItem.fullZipPath)) {
-        const ncxContent = await zip.file(ncxItem.fullZipPath)!.async('text');
-        const ncxDoc = parser.parseFromString(ncxContent, 'text/xml');
-        const navPoints = Array.from(ncxDoc.querySelectorAll('navPoint'));
-        for (const np of navPoints) {
-          const labelEl = np.querySelector('navLabel > text');
-          const contentEl = np.querySelector('content');
-          const label = labelEl?.textContent?.trim();
-          const href = contentEl?.getAttribute('src');
-          if (href && label) {
-            const fullZipPath = resolveZipPath(ncxItem.fullZipPath, href);
-            if (!tocTitleMap.has(fullZipPath)) {
-              tocTitleMap.set(fullZipPath, label);
+      if (ncxItem) {
+        const ncxFile = getZipFile(zip, ncxItem.fullZipPath);
+        if (ncxFile) {
+          const ncxContent = await ncxFile.async('text');
+          const ncxDoc = parser.parseFromString(ncxContent, 'text/xml');
+          const navPoints = Array.from(ncxDoc.querySelectorAll('navPoint'));
+          for (const np of navPoints) {
+            const labelEl = np.querySelector('navLabel > text');
+            const contentEl = np.querySelector('content');
+            const label = labelEl?.textContent?.trim();
+            const href = contentEl?.getAttribute('src');
+            if (href && label) {
+              const fullZipPath = resolveZipPath(ncxItem.fullZipPath, href);
+              if (!tocTitleMap.has(fullZipPath)) {
+                tocTitleMap.set(fullZipPath, label);
+              }
             }
           }
         }
@@ -279,7 +302,7 @@ export const parseEpubFile = async (file: File): Promise<Partial<BookData>> => {
 
       if (!idref || !manifestMap.has(idref)) continue;
       const manifestItem = manifestMap.get(idref)!;
-      const zipFile = zip.file(manifestItem.fullZipPath);
+      const zipFile = getZipFile(zip, manifestItem.fullZipPath);
       if (!zipFile) continue;
 
       const rawHtml = await zipFile.async('text');
@@ -291,7 +314,7 @@ export const parseEpubFile = async (file: File): Promise<Partial<BookData>> => {
         const href = link.getAttribute('href');
         if (href) {
           const cssZipPath = resolveZipPath(manifestItem.fullZipPath, href);
-          const cssFile = zip.file(cssZipPath);
+          const cssFile = getZipFile(zip, cssZipPath);
           if (cssFile) {
             try {
               let cssText = await cssFile.async('text');
@@ -313,7 +336,7 @@ export const parseEpubFile = async (file: File): Promise<Partial<BookData>> => {
         if (!srcAttr || srcAttr.startsWith('data:')) continue;
 
         const imgZipPath = resolveZipPath(manifestItem.fullZipPath, srcAttr);
-        const imgZipFile = zip.file(imgZipPath);
+        const imgZipFile = getZipFile(zip, imgZipPath);
         if (imgZipFile) {
           try {
             const base64 = await imgZipFile.async('base64');
@@ -341,7 +364,7 @@ export const parseEpubFile = async (file: File): Promise<Partial<BookData>> => {
         }
       }
 
-      // D. Extract Text and HTML Content
+      // D. Extract Text and HTML Content (including all <style> tags from <head> and <body>)
       const body = doc.body;
       if (!body) continue;
 
@@ -353,7 +376,10 @@ export const parseEpubFile = async (file: File): Promise<Partial<BookData>> => {
         continue;
       }
 
-      const htmlContent = body.innerHTML || '';
+      const styleElements = Array.from(doc.querySelectorAll('style'));
+      const stylesHtml = styleElements.map(s => s.outerHTML).join('\n');
+      const bodyHtml = body.innerHTML || '';
+      const htmlContent = stylesHtml ? `${stylesHtml}\n${bodyHtml}` : bodyHtml;
 
       chapters.push({
         title: chapterTitle || `Chapter ${chapters.length + 1}`,
