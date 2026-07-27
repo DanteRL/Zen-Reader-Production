@@ -4,9 +4,9 @@ import { BookData, ReaderSettings, AIEntityData, PdfViewMode, PdfFitMode } from 
 import { THEMES } from '../constants';
 import { calculateProgress, ensurePdfLibraryLoaded } from '../utils';
 import { TOC } from './TOC';
-import { GoogleGenAI } from "@google/genai";
+import { AIService } from '../services/aiService';
+import { TextConverter } from '../services/textConverter';
 import { translations, Locale } from '../locales';
-import * as OpenCC from 'opencc-js';
 
 // --- Types ---
 interface Position {
@@ -627,37 +627,10 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       isLoading: true
     });
     
-    const apiKey = settings.apiKey;
-    if (!apiKey) {
-       setActiveEntity(prev => prev ? { ...prev, data: { ...prev.data, definition: "API Key not configured. Please set it in Settings." }, isLoading: false } : null);
-       return;
-    }
-
     try {
-        const ai = new GoogleGenAI({ apiKey: apiKey });
-        let prompt = "";
-        let langInstruction = "";
-        if (settings.aiLanguage === 'auto') {
-           const userLang = navigator.language; 
-           if (userLang.startsWith('zh')) { langInstruction = "Respond in Simplified Chinese."; } else { langInstruction = "Respond in the same language as the selected text."; }
-        } else if (settings.aiLanguage === 'zh') { langInstruction = "Respond in Simplified Chinese."; } else if (settings.aiLanguage === 'en') { langInstruction = "Respond in English."; }
-
-        if (action === 'explain') {
-            prompt = `
-You are a "Contextual Knowledge Bridge".
-Context: "...${context}..."
-Target: "${text}"
-Rules: Explain background knowledge/meme/implication. No simple dictionary definitions.
-Structure: Concept, Implicit Meaning, Key Nuance.
-${langInstruction}`;
-        } else {
-            prompt = `Context: "${context}"
-Task: Translate "${text}" into the target language.
-${langInstruction}`;
-        }
-
-        const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
-        setActiveEntity(prev => prev ? ({ ...prev, data: { ...prev.data, definition: response.text ? response.text.trim() : "No result." }, isLoading: false }) : null);
+        const lang = settings.aiLanguage === 'auto' ? (navigator.language.startsWith('zh') ? 'zh' : 'en') : settings.aiLanguage;
+        const result = await AIService.explainTerm(text, context, lang);
+        setActiveEntity(prev => prev ? ({ ...prev, data: { ...prev.data, definition: result.definition }, isLoading: false }) : null);
     } catch (e) {
         console.error(e);
         setActiveEntity(prev => prev ? ({ ...prev, data: { ...prev.data, definition: "Error processing request." }, isLoading: false }) : null);
@@ -707,7 +680,6 @@ ${langInstruction}`;
   // --- Text Conversion Logic ---
 
   useEffect(() => {
-    // If PDF, or no chapter, or conversion is "none", just skip OpenCC
     if (isPdf || !currentChapter) {
       setConvertedContent('');
       setConvertedHtml('');
@@ -716,32 +688,19 @@ ${langInstruction}`;
 
     if (settings.textConversion === 'none') {
       setConvertedContent(currentChapter.content);
-      // Use raw HTML if available
       setConvertedHtml(currentChapter.html || '');
       return;
     }
 
-    // Initialize converter if needed or changed
     try {
-      if (settings.textConversion === 'cn2tw') {
-        converterRef.current = OpenCC.Converter({ from: 'cn', to: 'tw' });
-      } else if (settings.textConversion === 'tw2cn') {
-        converterRef.current = OpenCC.Converter({ from: 'tw', to: 'cn' });
-      }
-      
-      if (converterRef.current) {
-        setConvertedContent(converterRef.current(currentChapter.content));
-      } else {
-        setConvertedContent(currentChapter.content);
-      }
-      // For now, when conversion is requested, we won't convert HTML nodes.
-      // Clear convertedHtml to force text-mode rendering.
+      const mode = settings.textConversion === 'cn2tw' ? 's2t' : settings.textConversion === 'tw2cn' ? 't2s' : 'original';
+      const converted = TextConverter.convert(currentChapter.content, mode);
+      setConvertedContent(converted);
       setConvertedHtml('');
     } catch (e) {
-      console.error("OpenCC conversion error:", e);
-      setConvertedContent(currentChapter.content); // fallback
+      console.error("Text conversion error:", e);
+      setConvertedContent(currentChapter.content);
     }
-    
   }, [currentChapter, settings.textConversion, isPdf]);
 
   const resetControlsTimer = useCallback(() => {
